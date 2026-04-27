@@ -4,6 +4,15 @@ import type {
   AgentEventType,
   AgentRun,
   AgentRunStatus,
+  AutopilotCheckCommand,
+  AutopilotChildEntry,
+  AutopilotChildKind,
+  AutopilotChildStatus,
+  AutopilotConfig,
+  AutopilotKind,
+  AutopilotPersonaSnapshot,
+  AutopilotSession,
+  AutopilotStatus,
   Card,
   CardStatus,
   CardType,
@@ -28,6 +37,15 @@ export type {
   AgentEventType,
   AgentRun,
   AgentRunStatus,
+  AutopilotCheckCommand,
+  AutopilotChildEntry,
+  AutopilotChildKind,
+  AutopilotChildStatus,
+  AutopilotConfig,
+  AutopilotKind,
+  AutopilotPersonaSnapshot,
+  AutopilotSession,
+  AutopilotStatus,
   Card,
   CardStatus,
   CardType,
@@ -168,6 +186,10 @@ export interface RunStatsResult {
 export interface PromoteCommitResult {
   commitSha: string;
   base: string;
+  cleanup: {
+    worktreeRemoved: boolean;
+    branchDeleted: boolean;
+  };
 }
 
 export interface PromotePrResult {
@@ -365,6 +387,23 @@ export interface BridgeChannels {
   'attachments:upload': {
     args: { contentType: string; data: Uint8Array };
     result: UploadAttachmentResult;
+  };
+  'autopilot:start': {
+    args: {
+      kind: AutopilotKind;
+      title?: string;
+      config: AutopilotConfig;
+    };
+    result: { sessionId: number; issueNumber: number };
+  };
+  'autopilot:stop': {
+    args: { sessionId: number; stopChildren: boolean };
+    result: { sessionId: number };
+  };
+  'autopilot:list-active': { args: void; result: AutopilotSession[] };
+  'autopilot:get-by-issue': {
+    args: { issueNumber: number };
+    result: AutopilotSession | null;
   };
 }
 

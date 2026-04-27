@@ -52,7 +52,16 @@ export function priorityFromLabels(labels: readonly string[]): Priority | null {
   return null;
 }
 
-export type Tag = 'FEAT' | 'BUG' | 'IMPL' | 'PR' | 'CHORE' | 'INFRA' | 'DOCS' | 'FIX';
+export type Tag =
+  | 'FEAT'
+  | 'BUG'
+  | 'IMPL'
+  | 'PR'
+  | 'CHORE'
+  | 'INFRA'
+  | 'DOCS'
+  | 'FIX'
+  | 'AUTOPILOT';
 
 const TAG_LABELS: Record<string, Tag> = {
   feat: 'FEAT',
@@ -65,6 +74,7 @@ const TAG_LABELS: Record<string, Tag> = {
   docs: 'DOCS',
   implementation: 'IMPL',
   impl: 'IMPL',
+  autopilot: 'AUTOPILOT',
 };
 
 export function tagFromLabels(labels: readonly string[], isPullRequest: boolean): Tag | null {

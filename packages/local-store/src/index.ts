@@ -4,6 +4,7 @@ import { runMigrations } from './migrations/runner.js';
 import { AgentChecksRepo } from './repos/agent-checks.js';
 import { AgentEventsRepo } from './repos/agent-events.js';
 import { AgentRunsRepo } from './repos/agent-runs.js';
+import { AutopilotSessionsRepo } from './repos/autopilot-sessions.js';
 import { CardsRepo } from './repos/cards.js';
 import { FoldersRepo } from './repos/folders.js';
 import { HttpCacheRepo } from './repos/http-cache.js';
@@ -25,6 +26,7 @@ export interface Store {
   readonly localIssues: LocalIssuesRepo;
   readonly workspaces: WorkspacesRepo;
   readonly folders: FoldersRepo;
+  readonly autopilotSessions: AutopilotSessionsRepo;
   readonly db: Db;
   close(): void;
 }
@@ -56,6 +58,7 @@ function wrap(db: Db): Store {
     localIssues: new LocalIssuesRepo(db),
     workspaces: new WorkspacesRepo(db),
     folders: new FoldersRepo(db),
+    autopilotSessions: new AutopilotSessionsRepo(db),
     db,
     close: () => db.close(),
   };
@@ -72,6 +75,10 @@ export type { CreateCardInput } from './repos/cards.js';
 export type { CreateThreadInput } from './repos/threads.js';
 export type { CreateMessageInput } from './repos/messages.js';
 export type { CreateAgentRunInput, UpdateAgentRunPatch } from './repos/agent-runs.js';
+export type {
+  CreateAutopilotSessionInput,
+  UpdateAutopilotSessionPatch,
+} from './repos/autopilot-sessions.js';
 export type { AppendAgentEventInput, ListAgentEventsOptions } from './repos/agent-events.js';
 export type { CreatePromotionInput } from './repos/promotions.js';
 export type { SetCacheInput } from './repos/http-cache.js';
@@ -110,6 +117,15 @@ export type {
   AgentRun,
   AgentRunId,
   AgentRunStatus,
+  AutopilotCheckCommand,
+  AutopilotChildEntry,
+  AutopilotChildKind,
+  AutopilotChildStatus,
+  AutopilotConfig,
+  AutopilotKind,
+  AutopilotPersonaSnapshot,
+  AutopilotSession,
+  AutopilotStatus,
   CacheEntry,
   Card,
   CardId,

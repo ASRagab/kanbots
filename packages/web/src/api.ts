@@ -8,6 +8,9 @@ import type {
 import type {
   AgentCheck,
   AgentRun,
+  AutopilotConfig,
+  AutopilotKind,
+  AutopilotSession,
   Card,
   Comment,
   Config,
@@ -259,4 +262,22 @@ export const api = {
       data,
     });
   },
+  startAutopilot: (input: {
+    kind: AutopilotKind;
+    title?: string;
+    config: AutopilotConfig;
+  }): Promise<{ sessionId: number; issueNumber: number }> => {
+    const args: ChannelArgs<'autopilot:start'> = { kind: input.kind, config: input.config };
+    if (input.title !== undefined) args.title = input.title;
+    return invoke('autopilot:start', args);
+  },
+  stopAutopilot: (
+    sessionId: number,
+    opts: { stopChildren: boolean },
+  ): Promise<{ sessionId: number }> =>
+    invoke('autopilot:stop', { sessionId, stopChildren: opts.stopChildren }),
+  listActiveAutopilots: (): Promise<AutopilotSession[]> =>
+    invoke('autopilot:list-active', undefined),
+  getAutopilotByIssue: (issueNumber: number): Promise<AutopilotSession | null> =>
+    invoke('autopilot:get-by-issue', { issueNumber }),
 } as const;

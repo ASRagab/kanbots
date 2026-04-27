@@ -17,7 +17,7 @@ import type {
   PostMessageResult,
   ThreadPayload,
 } from '../bridge.js';
-import { alreadyActive, parseArgs } from './errors.js';
+import { alreadyActive, badRequest, parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
 
 const issueListSchema = z
@@ -243,6 +243,11 @@ export async function postMessage(
     if (willResume || willStart) {
       try {
         const issue = await deps.source.getIssue(parsed.number);
+        if (issue.labels.includes('type:autopilot')) {
+          throw badRequest(
+            'Autopilot tasks are managed by the orchestrator and cannot accept dispatched messages. Reply to its child tasks instead.',
+          );
+        }
         const taskPrompt = buildTaskSystemPrompt(issue);
         const appendSystemPrompt =
           parsed.appendSystemPrompt !== undefined
@@ -300,6 +305,11 @@ export async function dispatch(
   const fromStatus = parsed.fromStatus ?? null;
 
   const issue = await deps.source.getIssue(parsed.number);
+  if (issue.labels.includes('type:autopilot')) {
+    throw badRequest(
+      'Autopilot tasks are managed by the orchestrator and cannot be dispatched directly. Use the Autopilot launcher to start or stop them.',
+    );
+  }
   const thread = deps.store.threads.getOrCreate({
     repoOwner: deps.config.owner,
     repoName: deps.config.repo,

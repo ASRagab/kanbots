@@ -1,4 +1,5 @@
 import type { Config } from '../../src/handlers/types.js';
+import type { AutopilotManager } from '../../src/autopilot/orchestrator.js';
 import {
   createHandlers,
   type Handlers,
@@ -54,8 +55,20 @@ export function makeHandlerTestKit(
     body: '# Suggested\n\nstub',
   });
   const config: Config = { owner: 'octo', repo: 'hello', ...configOverride };
+  const autopilot: AutopilotManager = {
+    start: () => {
+      throw new Error('autopilot.start not implemented in test stub');
+    },
+    stop: async () => {
+      throw new Error('autopilot.stop not implemented in test stub');
+    },
+    getSession: () => null,
+    getSessionByIssue: () => null,
+    listActive: () => [],
+    stopAllForShutdown: async () => {},
+  };
   const handlers = createHandlers({
-    deps: { source, store, config, supervisor, draftIssue, suggestIssue },
+    deps: { source, store, config, supervisor, draftIssue, suggestIssue, autopilot },
     subscriptions: registry,
   });
   return { source, store, supervisor, registry, config, handlers, draftIssue };

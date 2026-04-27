@@ -111,3 +111,65 @@ export interface CacheEntry {
   body: string;
   updatedAt: string;
 }
+
+export type AutopilotKind = 'feature-dev' | 'qa';
+export type AutopilotStatus = 'running' | 'stopped' | 'completed' | 'failed';
+export type AutopilotChildKind = 'feat' | 'bug';
+export type AutopilotChildStatus =
+  | 'pending'
+  | 'running'
+  | 'awaiting_input'
+  | 'complete'
+  | 'failed'
+  | 'stopped'
+  | 'skipped';
+
+export interface AutopilotPersonaSnapshot {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
+export interface AutopilotCheckCommand {
+  kind: 'typecheck' | 'tests' | 'lint' | 'build' | 'e2e';
+  command: string;
+  args: string[];
+}
+
+export type AutopilotConfig =
+  | {
+      kind: 'feature-dev';
+      personas: AutopilotPersonaSnapshot[];
+    }
+  | {
+      kind: 'qa';
+      checks: AutopilotCheckCommand[];
+      liveUi: boolean;
+      devServer?: { command: string; args: string[] };
+    };
+
+export interface AutopilotChildEntry {
+  issueNumber: number;
+  runId: number | null;
+  kind: AutopilotChildKind;
+  status: AutopilotChildStatus;
+  createdAt: string;
+  endedAt: string | null;
+  persona?: string;
+  title: string;
+  note?: string;
+}
+
+export interface AutopilotSession {
+  id: number;
+  issueNumber: number;
+  kind: AutopilotKind;
+  config: AutopilotConfig;
+  status: AutopilotStatus;
+  startedAt: string;
+  endedAt: string | null;
+  stopReason: string | null;
+  cycleIndex: number;
+  currentChildRunId: number | null;
+  children: AutopilotChildEntry[];
+}

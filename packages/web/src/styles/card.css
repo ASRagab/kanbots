@@ -500,6 +500,12 @@
 .kb-tag.kb-tag-DOCS {
   color: var(--ink-2);
 }
+.kb-tag.kb-tag-AUTOPILOT {
+  color: oklch(0.82 0.16 290);
+  border-color: oklch(0.82 0.16 290 / 0.45);
+  background: oklch(0.82 0.16 290 / 0.14);
+  letter-spacing: 0.05em;
+}
 .kb-card-num {
   font-family: var(--ff-mono);
   font-size: 10.5px;

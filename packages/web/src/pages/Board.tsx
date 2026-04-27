@@ -10,6 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { useMemo, useState } from 'react';
 import { api } from '../api.js';
+import { AutopilotLaunchModal } from '../components/modals/AutopilotLaunchModal.js';
 import { CardPreview } from '../components/Card.js';
 import { Column } from '../components/Column.js';
 import { PersonaPickerModal } from '../components/modals/PersonaPickerModal.js';
@@ -106,6 +107,7 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
   const [moveError, setMoveError] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
+  const [autopilotLaunchOpen, setAutopilotLaunchOpen] = useState(false);
   const [selectedNumber, setSelectedNumber] = useSelection();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -255,6 +257,14 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
           </button>
           <button
             type="button"
+            className="kb-btn ghost"
+            onClick={() => setAutopilotLaunchOpen(true)}
+            title="Start an autopilot session"
+          >
+            Autopilot
+          </button>
+          <button
+            type="button"
             className="kb-btn primary"
             onClick={() => onOpenCreate?.()}
           >
@@ -381,6 +391,12 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
         <PersonaPickerModal
           onClose={() => setPersonaPickerOpen(false)}
           onPick={(persona) => void runSuggestionWith(persona)}
+        />
+      ) : null}
+      {autopilotLaunchOpen ? (
+        <AutopilotLaunchModal
+          onClose={() => setAutopilotLaunchOpen(false)}
+          onStarted={() => dispatchIssuesRefetch()}
         />
       ) : null}
     </DndContext>

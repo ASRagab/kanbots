@@ -10,6 +10,7 @@ import * as agentEvents from './agent-events.js';
 import * as agentPreview from './agent-preview.js';
 import * as agentRuns from './agent-runs.js';
 import * as attachments from './attachments.js';
+import * as autopilot from './autopilot.js';
 import * as cards from './cards.js';
 import * as composer from './composer.js';
 import * as config from './config.js';
@@ -80,6 +81,10 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'composer:draft': (args) => composer.draft(deps, args),
     'composer:suggest': (args) => composer.suggest(deps, args),
     'attachments:upload': (args) => attachments.upload(deps, args),
+    'autopilot:start': (args) => autopilot.start(deps, args),
+    'autopilot:stop': (args) => autopilot.stop(deps, args),
+    'autopilot:list-active': () => autopilot.listActive(deps),
+    'autopilot:get-by-issue': (args) => autopilot.getByIssue(deps, args),
   };
   return map;
 }

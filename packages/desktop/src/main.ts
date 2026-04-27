@@ -3,10 +3,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import {
+  createAutopilotManager,
   createHandlers,
   createSupervisor,
   reconcileIssueLabels,
   type AgentSupervisor,
+  type AutopilotManager,
   type DraftIssueFn,
   type SuggestFeatureFn,
 } from '@kanbots/api';
@@ -43,6 +45,7 @@ interface ActiveWorkspace {
   store: Store;
   source: IssueSource;
   supervisor: AgentSupervisor;
+  autopilot: AutopilotManager;
   draftIssue: DraftIssueFn;
   suggestIssue: SuggestFeatureFn;
   subscriptions: OwnedSubscriptionRegistry;
@@ -108,6 +111,56 @@ async function ensureLocalWorkspace(repoPath: string): Promise<WorkspaceConfig> 
   return config;
 }
 
+function broadcastIssueChange(): void {
+  const sender = mainWindow?.webContents;
+  if (!sender || sender.isDestroyed()) return;
+  sender.send('issues:changed', {});
+}
+
+function wrapNotifyingSource(source: IssueSource): IssueSource {
+  const wrapped: IssueSource = {
+    listIssues: (opts) => source.listIssues(opts),
+    getIssue: (n) => source.getIssue(n),
+    listComments: (n) => source.listComments(n),
+    addComment: (n, body) => source.addComment(n, body),
+    createIssue: async (input) => {
+      const r = await source.createIssue(input);
+      broadcastIssueChange();
+      return r;
+    },
+    updateIssue: async (n, patch) => {
+      const r = await source.updateIssue(n, patch);
+      broadcastIssueChange();
+      return r;
+    },
+  };
+  if (source.openDraftPR) {
+    wrapped.openDraftPR = source.openDraftPR.bind(source);
+  }
+  return wrapped;
+}
+
+function wrapNotifyingSupervisor(supervisor: AgentSupervisor): AgentSupervisor {
+  return {
+    ...supervisor,
+    start: async (input) => {
+      const r = await supervisor.start(input);
+      broadcastIssueChange();
+      return r;
+    },
+    resume: async (input) => {
+      const r = await supervisor.resume(input);
+      broadcastIssueChange();
+      return r;
+    },
+    stop: async (id) => {
+      const r = await supervisor.stop(id);
+      broadcastIssueChange();
+      return r;
+    },
+  };
+}
+
 async function buildSource(config: WorkspaceConfig, store: Store): Promise<IssueSource> {
   if (config.mode === 'github') {
     const token = await resolveGitHubToken();
@@ -128,6 +181,11 @@ async function closeActiveWorkspace(): Promise<void> {
   if (!activeWorkspace) return;
   try {
     activeWorkspace.detachOwnerCleanup();
+  } catch {
+    // ignore
+  }
+  try {
+    await activeWorkspace.autopilot.stopAllForShutdown();
   } catch {
     // ignore
   }
@@ -167,13 +225,13 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
 
   let source: IssueSource;
   try {
-    source = await buildSource(config, store);
+    source = wrapNotifyingSource(await buildSource(config, store));
   } catch (err) {
     store.close();
     throw err;
   }
 
-  const supervisor = createSupervisor({
+  const rawSupervisor = createSupervisor({
     store,
     repoPath: gitRoot,
     onRunComplete: async (run) => {
@@ -192,6 +250,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
       }
     },
   });
+  const supervisor = wrapNotifyingSupervisor(rawSupervisor);
   const draftIssue = createComposer({ cwd: gitRoot });
   const suggestIssue = createSuggester({ cwd: gitRoot });
 
@@ -226,10 +285,28 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
       const sender = mainWindow?.webContents;
       if (!sender || sender.isDestroyed()) return;
       sender.send('agent-runs:events:data', payload);
+      if (payload.kind === 'status') broadcastIssueChange();
     },
   });
+  const autopilot = createAutopilotManager({
+    store,
+    source,
+    supervisor,
+    suggestIssue,
+    repoPath: gitRoot,
+    repoConfig: { owner: apiConfig.owner, repo: apiConfig.repo },
+    onSessionChange: () => broadcastIssueChange(),
+  });
   const handlers = createHandlers({
-    deps: { source, store, config: apiConfig, supervisor, draftIssue, suggestIssue },
+    deps: {
+      source,
+      store,
+      config: apiConfig,
+      supervisor,
+      draftIssue,
+      suggestIssue,
+      autopilot,
+    },
     subscriptions,
   });
   const unregisterHandlers = registerHandlers(handlers, subscriptions);
@@ -260,6 +337,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     store,
     source,
     supervisor,
+    autopilot,
     draftIssue,
     suggestIssue,
     subscriptions,

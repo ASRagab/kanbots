@@ -8,6 +8,14 @@ export {
   type StartRunInput,
 } from './agent-runs/supervisor.js';
 export {
+  createAutopilotManager,
+  type AutopilotManager,
+  type AutopilotManagerOpts,
+  type AutopilotRepoConfig,
+  type StartAutopilotInput,
+  type StartAutopilotResult,
+} from './autopilot/orchestrator.js';
+export {
   reconcileIssueLabels,
   type ReconcileLabelsResult,
 } from './workspace-reconcile.js';
@@ -31,6 +39,15 @@ export type {
   AgentRun,
   AgentRunEventPayload,
   AgentRunStatus,
+  AutopilotCheckCommand,
+  AutopilotChildEntry,
+  AutopilotChildKind,
+  AutopilotChildStatus,
+  AutopilotConfig,
+  AutopilotKind,
+  AutopilotPersonaSnapshot,
+  AutopilotSession,
+  AutopilotStatus,
   BridgeChannels,
   Card,
   CardStatus,

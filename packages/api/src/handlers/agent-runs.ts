@@ -13,6 +13,7 @@ import type {
   PromotePrResult,
   RunStatsResult,
 } from '../bridge.js';
+import { stopRunPreview } from './agent-preview.js';
 import { badRequest, notFound, parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
 
@@ -157,23 +158,128 @@ export async function promoteCommit(
   const issue = await deps.source.getIssue(thread.issueNumber);
 
   const base = await detectLocalBase(repoPath);
-  const stamp = Date.now().toString(36);
-  const tmpPath = `${repoPath}/.kanbots/promote/${parsed.runId}-${stamp}`;
-  await mkdir(dirname(tmpPath), { recursive: true });
-  await execFileAsync('git', ['worktree', 'add', tmpPath, base], { cwd: repoPath });
+  const message = `Issue #${issue.number}: ${issue.title}`;
+  const baseLocation = await locateBaseCheckout(repoPath, base);
+  let commitSha: string;
+  if (baseLocation && (await isWorktreeClean(baseLocation))) {
+    // base is already checked out cleanly somewhere — merge in place so the
+    // working tree stays in sync with the moved branch ref.
+    await execFileAsync('git', ['merge', '--squash', run.branchName], {
+      cwd: baseLocation,
+    });
+    await execFileAsync('git', ['commit', '-m', message], { cwd: baseLocation });
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+      cwd: baseLocation,
+    });
+    commitSha = stdout.trim();
+  } else {
+    if (baseLocation) {
+      throw badRequest(
+        `base branch '${base}' is checked out at ${baseLocation} with uncommitted changes — clean it up before promoting`,
+      );
+    }
+    // base isn't checked out anywhere — use a detached worktree and move the
+    // ref ourselves so we don't compete with another checkout.
+    const stamp = Date.now().toString(36);
+    const tmpPath = `${repoPath}/.kanbots/promote/${parsed.runId}-${stamp}`;
+    await mkdir(dirname(tmpPath), { recursive: true });
+    await execFileAsync('git', ['worktree', 'add', '--detach', tmpPath, base], {
+      cwd: repoPath,
+    });
+    try {
+      await execFileAsync('git', ['merge', '--squash', run.branchName], { cwd: tmpPath });
+      await execFileAsync('git', ['commit', '-m', message], { cwd: tmpPath });
+      const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: tmpPath });
+      commitSha = stdout.trim();
+      await execFileAsync('git', ['update-ref', `refs/heads/${base}`, commitSha], {
+        cwd: repoPath,
+      });
+    } finally {
+      await execFileAsync(
+        'git',
+        ['worktree', 'remove', '--force', tmpPath],
+        { cwd: repoPath },
+      ).catch(() => undefined);
+    }
+  }
+
+  const cleanup = await cleanupRunArtifacts(deps, run, repoPath);
+  return { commitSha, base, cleanup };
+}
+
+async function locateBaseCheckout(
+  repoPath: string,
+  base: string,
+): Promise<string | null> {
+  let stdout: string;
   try {
-    await execFileAsync('git', ['merge', '--squash', run.branchName], { cwd: tmpPath });
-    const message = `Issue #${issue.number}: ${issue.title}`;
-    await execFileAsync('git', ['commit', '-m', message], { cwd: tmpPath });
-    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: tmpPath });
-    return { commitSha: stdout.trim(), base };
-  } finally {
+    ({ stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: repoPath,
+    }));
+  } catch {
+    return null;
+  }
+  let currentPath: string | null = null;
+  for (const rawLine of stdout.split('\n')) {
+    const line = rawLine.trimEnd();
+    if (line.startsWith('worktree ')) {
+      currentPath = line.slice('worktree '.length);
+    } else if (line.startsWith('branch ')) {
+      const ref = line.slice('branch '.length);
+      if (ref === `refs/heads/${base}` && currentPath) return currentPath;
+    } else if (line === '' || line === 'detached') {
+      currentPath = null;
+    }
+  }
+  return null;
+}
+
+async function isWorktreeClean(path: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: path });
+    return stdout.trim() === '';
+  } catch {
+    return false;
+  }
+}
+
+async function cleanupRunArtifacts(
+  deps: HandlerDeps,
+  run: AgentRun,
+  repoPath: string,
+): Promise<{ worktreeRemoved: boolean; branchDeleted: boolean }> {
+  let worktreeRemoved = false;
+  let branchDeleted = false;
+  if (!run.worktreePath || !run.branchName) {
+    return { worktreeRemoved, branchDeleted };
+  }
+  // Stop any preview server holding the worktree open before we yank it.
+  try {
+    await stopRunPreview(deps, { runId: run.id });
+  } catch {
+    // best-effort
+  }
+  try {
     await execFileAsync(
       'git',
-      ['worktree', 'remove', '--force', tmpPath],
+      ['worktree', 'remove', '--force', run.worktreePath],
       { cwd: repoPath },
-    ).catch(() => undefined);
+    );
+    worktreeRemoved = true;
+  } catch {
+    // worktree may already be missing
   }
+  try {
+    await execFileAsync('git', ['branch', '-D', run.branchName], { cwd: repoPath });
+    branchDeleted = true;
+  } catch {
+    // branch may already be gone
+  }
+  deps.store.agentRuns.update(run.id, {
+    worktreePath: null,
+    branchName: null,
+  });
+  return { worktreeRemoved, branchDeleted };
 }
 
 export async function promotePr(

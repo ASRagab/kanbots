@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -22,6 +23,7 @@ export interface IssuesContextValue {
 const IssuesContext = createContext<IssuesContextValue | null>(null);
 
 export const ISSUES_REFETCH_EVENT = 'kanbots:issues-refetch';
+export const ISSUES_CHANGED_CHANNEL = 'issues:changed';
 
 export function IssuesProvider({ children }: { children: ReactNode }) {
   const [refetchTick, setRefetchTick] = useState(0);
@@ -33,13 +35,41 @@ export function IssuesProvider({ children }: { children: ReactNode }) {
     setRefetchTick((t) => t + 1);
   }, []);
 
+  // Coalesce bursts of change events so a flurry of label/run updates
+  // results in at most one refetch per ~80ms window.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedRefetch = useCallback(() => {
+    if (debounceRef.current !== null) return;
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      void refetch();
+    }, 80);
+  }, [refetch]);
+
   useEffect(() => {
     function onEvent(): void {
-      void refetch();
+      debouncedRefetch();
     }
     window.addEventListener(ISSUES_REFETCH_EVENT, onEvent);
     return () => window.removeEventListener(ISSUES_REFETCH_EVENT, onEvent);
-  }, [refetch]);
+  }, [debouncedRefetch]);
+
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.kanbots : undefined;
+    if (!bridge) return;
+    return bridge.subscribe(ISSUES_CHANGED_CHANNEL, () => {
+      debouncedRefetch();
+    });
+  }, [debouncedRefetch]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current !== null) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+  }, []);
 
   return createElement(
     IssuesContext.Provider,

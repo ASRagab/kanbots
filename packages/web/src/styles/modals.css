@@ -167,6 +167,11 @@
   outline: 2px solid var(--accent, var(--ink-2));
   outline-offset: 2px;
 }
+.kb-persona-card.selected {
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--bg-1) 80%, var(--accent-soft));
+  box-shadow: 0 0 0 1px var(--accent-line) inset;
+}
 .kb-persona-emoji {
   font-size: 22px;
   line-height: 1;

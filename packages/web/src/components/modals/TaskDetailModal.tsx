@@ -1,7 +1,11 @@
-import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { api } from '../../api.js';
 import { useFetch } from '../../hooks/useFetch.js';
-import { useIssues, dispatchIssuesRefetch } from '../../hooks/useIssues.js';
+import {
+  useIssues,
+  dispatchIssuesRefetch,
+  ISSUES_CHANGED_CHANNEL,
+} from '../../hooks/useIssues.js';
 import { useAgentRunStream } from '../../hooks/useAgentRunStream.js';
 import {
   ageString,
@@ -17,6 +21,8 @@ import type {
   AgentEvent,
   AgentRun,
   AgentRunStatus,
+  AutopilotChildEntry,
+  AutopilotSession,
   Card,
   DecisionPayload,
   DiffFile,
@@ -26,13 +32,14 @@ import type {
 } from '../../types.js';
 
 const TAB_LABELS: Record<DetailTab, string> = {
+  autopilot: 'Autopilot',
   overview: 'Overview',
   thread: 'Thread',
   diff: 'Diff',
   preview: 'Preview',
   runs: 'Runs',
 };
-type DetailTab = 'overview' | 'thread' | 'diff' | 'preview' | 'runs';
+type DetailTab = 'autopilot' | 'overview' | 'thread' | 'diff' | 'preview' | 'runs';
 
 const STATUS_LABEL: Record<AgentRunStatus, string> = {
   starting: 'STARTING',
@@ -65,11 +72,20 @@ export interface TaskDetailModalProps {
 }
 
 export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) {
-  const [tab, setTab] = useState<DetailTab>('overview');
   const { data, loading, error, refetch } = useFetch<IssueDetailPayload>(
     `issue:${issueNumber}`,
     () => api.issue(issueNumber),
   );
+  const isAutopilot = (data?.issue?.labels ?? []).includes('type:autopilot');
+  const [tab, setTab] = useState<DetailTab>(isAutopilot ? 'autopilot' : 'overview');
+  useEffect(() => {
+    if (isAutopilot && tab !== 'autopilot' && tab !== 'thread') {
+      // Default an autopilot card to its dedicated tab on load.
+      setTab('autopilot');
+    }
+    // Only run on mount and when isAutopilot flips true; honour user's later picks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAutopilot]);
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent): void {
@@ -78,6 +94,28 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Refetch this issue's detail whenever the main process signals a change.
+  // Debounced so a burst of run-status flips collapses to one fetch.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.kanbots : undefined;
+    if (!bridge) return;
+    const unsubscribe = bridge.subscribe(ISSUES_CHANGED_CHANNEL, () => {
+      if (debounceRef.current !== null) return;
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        void refetch();
+      }, 80);
+    });
+    return () => {
+      unsubscribe();
+      if (debounceRef.current !== null) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+  }, [refetch]);
 
   function stopInner(e: MouseEvent<HTMLDivElement>): void {
     e.stopPropagation();
@@ -93,6 +131,10 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
     activeRun?.status === 'awaiting_input' ||
     activeRun?.status === 'starting';
 
+  const visibleTabs: DetailTab[] = isAutopilot
+    ? ['autopilot', 'overview']
+    : ['overview', 'thread', 'diff', 'preview', 'runs'];
+
   return (
     <div className="kb-modal-scrim kb-app" onClick={onClose} role="dialog" aria-modal="true">
       <div className="kb-modal" onClick={stopInner}>
@@ -104,7 +146,10 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
           <span className="num">#{issueNumber}</span>
           <h2>{issue?.title ?? (loading ? 'Loading…' : 'Issue')}</h2>
           <span className="grow" />
-          {activeRun && isRunning ? (
+          {isAutopilot ? (
+            <AutopilotStopButton issueNumber={issueNumber} onAfter={() => void refetch()} />
+          ) : null}
+          {!isAutopilot && activeRun && isRunning ? (
             <button
               type="button"
               className="kb-btn ghost"
@@ -113,30 +158,34 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
               Stop
             </button>
           ) : null}
-          <button type="button" className="kb-btn ghost" disabled title="Phase 11">
-            Fork run
-          </button>
-          {displayRun ? (
+          {!isAutopilot ? (
+            <button type="button" className="kb-btn ghost" disabled title="Phase 11">
+              Fork run
+            </button>
+          ) : null}
+          {!isAutopilot && displayRun ? (
             <button type="button" className="kb-btn primary" onClick={() => setTab('preview')}>
               Open preview ↗
             </button>
           ) : null}
-          <button
-            type="button"
-            className="kb-btn ghost"
-            onClick={() => {
-              const msg = isRunning
-                ? 'Archive this ticket? Its running agent will be stopped.'
-                : 'Archive this ticket?';
-              if (!window.confirm(msg)) return;
-              void api.archiveIssue(issueNumber).then(() => {
-                dispatchIssuesRefetch();
-                onClose();
-              });
-            }}
-          >
-            Archive
-          </button>
+          {!isAutopilot ? (
+            <button
+              type="button"
+              className="kb-btn ghost"
+              onClick={() => {
+                const msg = isRunning
+                  ? 'Archive this ticket? Its running agent will be stopped.'
+                  : 'Archive this ticket?';
+                if (!window.confirm(msg)) return;
+                void api.archiveIssue(issueNumber).then(() => {
+                  dispatchIssuesRefetch();
+                  onClose();
+                });
+              }}
+            >
+              Archive
+            </button>
+          ) : null}
           <button
             type="button"
             className="x-btn"
@@ -214,7 +263,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                 </div>
 
                 <div className="kb-tdm-tabs">
-                  {(Object.keys(TAB_LABELS) as DetailTab[]).map((t) => (
+                  {visibleTabs.map((t) => (
                     <button
                       key={t}
                       type="button"
@@ -227,10 +276,13 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                 </div>
 
                 <div className="kb-tdm-content">
+                  {tab === 'autopilot' ? (
+                    <AutopilotTab issueNumber={issue.number} />
+                  ) : null}
                   {tab === 'overview' ? (
                     <OverviewTab issue={issue} displayRun={displayRun} />
                   ) : null}
-                  {tab === 'thread' ? (
+                  {tab === 'thread' && !isAutopilot ? (
                     <ThreadTab
                       activeRun={activeRun}
                       displayRun={displayRun}
@@ -239,9 +291,9 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                       onActionDone={() => void refetch()}
                     />
                   ) : null}
-                  {tab === 'diff' ? <DiffTabModal activeRun={displayRun} /> : null}
-                  {tab === 'preview' ? <PreviewTabModal activeRun={displayRun} /> : null}
-                  {tab === 'runs' ? <RunsTab issueNumber={issue.number} /> : null}
+                  {tab === 'diff' && !isAutopilot ? <DiffTabModal activeRun={displayRun} /> : null}
+                  {tab === 'preview' && !isAutopilot ? <PreviewTabModal activeRun={displayRun} /> : null}
+                  {tab === 'runs' && !isAutopilot ? <RunsTab issueNumber={issue.number} /> : null}
                 </div>
               </>
             ) : error ? (
@@ -714,7 +766,12 @@ function CompletionActions({
             void call(
               'commit',
               () => api.promoteCommit(runId),
-              (r) => `Committed ${r.commitSha.slice(0, 7)} on ${r.base}`,
+              (r) => {
+                const parts = [`Committed ${r.commitSha.slice(0, 7)} on ${r.base}`];
+                if (r.cleanup.worktreeRemoved) parts.push('worktree removed');
+                if (r.cleanup.branchDeleted) parts.push('branch deleted');
+                return parts.join(' · ');
+              },
             );
           }}
         >
@@ -1116,6 +1173,318 @@ function RunsTab({ issueNumber }: { issueNumber: number }) {
         })}
       </div>
     </div>
+  );
+}
+
+function AutopilotStopButton({
+  issueNumber,
+  onAfter,
+}: {
+  issueNumber: number;
+  onAfter: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function stop(stopChildren: boolean): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      const session = await api.getAutopilotByIssue(issueNumber);
+      if (!session) {
+        throw new Error('Autopilot session not found for this card.');
+      }
+      await api.stopAutopilot(session.id, { stopChildren });
+      setConfirmOpen(false);
+      dispatchIssuesRefetch();
+      onAfter();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="kb-btn ghost"
+        onClick={() => setConfirmOpen(true)}
+        disabled={busy}
+      >
+        Stop autopilot
+      </button>
+      {confirmOpen ? (
+        <div className="kb-modal-scrim kb-app" onClick={() => !busy && setConfirmOpen(false)}>
+          <div
+            className="kb-modal sm"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 460 }}
+          >
+            <div className="kb-modal-head">
+              <h2>Stop autopilot</h2>
+              <span className="grow" />
+            </div>
+            <div className="kb-modal-body" style={{ display: 'block', padding: '14px 20px' }}>
+              <div style={{ fontSize: 13, color: 'var(--ink-1)', marginBottom: 12 }}>
+                The autopilot loop will stop creating new tasks. Choose what happens to any
+                child task that's currently running.
+              </div>
+              {error ? (
+                <div style={{ fontSize: 11, color: 'var(--failed)', marginBottom: 8 }}>
+                  {error}
+                </div>
+              ) : null}
+            </div>
+            <div className="kb-modal-foot">
+              <button
+                type="button"
+                className="kb-btn ghost"
+                onClick={() => setConfirmOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <span className="grow" />
+              <button
+                type="button"
+                className="kb-btn ghost"
+                onClick={() => void stop(false)}
+                disabled={busy}
+              >
+                Let children finish
+              </button>
+              <button
+                type="button"
+                className="kb-btn primary"
+                onClick={() => void stop(true)}
+                disabled={busy}
+                style={{ marginLeft: 8 }}
+              >
+                {busy ? 'Stopping…' : 'Stop and cancel children'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function AutopilotTab({ issueNumber }: { issueNumber: number }) {
+  const { data, loading, error, refetch } = useFetch<AutopilotSession | null>(
+    `autopilot:${issueNumber}`,
+    () => api.getAutopilotByIssue(issueNumber),
+  );
+
+  // Refetch on broadcast — orchestrator fires `issues:changed` after every
+  // session/cycle update.
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.kanbots : undefined;
+    if (!bridge) return;
+    return bridge.subscribe(ISSUES_CHANGED_CHANNEL, () => {
+      void refetch();
+    });
+  }, [refetch]);
+
+  if (loading && !data) {
+    return (
+      <div className="kb-tdm-section">
+        <h3>Autopilot</h3>
+        <div className="kb-desc-md">Loading…</div>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="kb-tdm-section">
+        <h3>Autopilot</h3>
+        <div className="kb-desc-md" style={{ color: 'var(--failed)' }}>
+          {error.message}
+        </div>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="kb-tdm-section">
+        <h3>Autopilot</h3>
+        <div className="kb-desc-md" style={{ color: 'var(--ink-3)' }}>
+          No autopilot session found for this card. It may have been started by an older app
+          version.
+        </div>
+      </div>
+    );
+  }
+
+  const session = data;
+  const personas =
+    session.config.kind === 'feature-dev' ? session.config.personas : [];
+  const checks = session.config.kind === 'qa' ? session.config.checks : [];
+  const liveUi = session.config.kind === 'qa' ? session.config.liveUi : false;
+  const cycleHint =
+    session.config.kind === 'feature-dev' && personas.length > 0
+      ? `Next: ${personas[session.cycleIndex % personas.length]?.name ?? '—'}`
+      : '';
+
+  return (
+    <div className="kb-tdm-section">
+      <h3>Autopilot · {session.kind}</h3>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto 1fr',
+          gap: '4px 16px',
+          fontSize: 12,
+          marginBottom: 14,
+        }}
+      >
+        <span style={{ color: 'var(--ink-3)' }}>Status</span>
+        <span style={{ color: 'var(--ink-1)' }}>
+          {session.status}
+          {session.stopReason ? (
+            <span style={{ color: 'var(--ink-3)' }}> · {session.stopReason}</span>
+          ) : null}
+        </span>
+        <span style={{ color: 'var(--ink-3)' }}>Started</span>
+        <span style={{ color: 'var(--ink-1)' }}>{ageString(session.startedAt)} ago</span>
+        {session.endedAt ? (
+          <>
+            <span style={{ color: 'var(--ink-3)' }}>Ended</span>
+            <span style={{ color: 'var(--ink-1)' }}>{ageString(session.endedAt)} ago</span>
+          </>
+        ) : null}
+        <span style={{ color: 'var(--ink-3)' }}>Cycle</span>
+        <span style={{ color: 'var(--ink-1)' }}>
+          {session.cycleIndex} {cycleHint ? `· ${cycleHint}` : ''}
+        </span>
+      </div>
+
+      {personas.length > 0 ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>Personas</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {personas.map((p, i) => (
+              <span
+                key={p.id}
+                className="kb-chip mono"
+                style={
+                  i === session.cycleIndex % personas.length && session.status === 'running'
+                    ? { borderColor: 'var(--accent)', color: 'var(--accent)' }
+                    : undefined
+                }
+              >
+                {p.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {checks.length > 0 || liveUi ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>QA scope</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {checks.map((c) => (
+              <span key={c.kind} className="kb-chip mono">
+                {c.kind}: {c.command}
+              </span>
+            ))}
+            {liveUi ? <span className="kb-chip mono">live UI</span> : null}
+          </div>
+        </div>
+      ) : null}
+
+      <div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 8 }}>
+          Children · {session.children.length}
+        </div>
+        {session.children.length === 0 ? (
+          <div className="kb-desc-md" style={{ color: 'var(--ink-3)' }}>
+            No tasks created yet. The first one will appear shortly.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {[...session.children].reverse().map((child, idx) => (
+              <ChildRow key={`${child.issueNumber}-${idx}`} child={child} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChildRow({ child }: { child: AutopilotChildEntry }) {
+  const isReal = child.issueNumber > 0;
+  return (
+    <a
+      href={isReal ? `#/issue/${child.issueNumber}` : undefined}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 10px',
+        borderRadius: 6,
+        background: 'var(--bg-2)',
+        border: '1px solid var(--hairline-soft)',
+        textDecoration: 'none',
+        color: 'inherit',
+        fontSize: 12,
+        cursor: isReal ? 'pointer' : 'default',
+      }}
+      onClick={(e) => {
+        if (!isReal) e.preventDefault();
+      }}
+    >
+      <span
+        style={{
+          fontFamily: 'var(--ff-mono)',
+          fontSize: 11,
+          color: 'var(--ink-3)',
+          minWidth: 40,
+        }}
+      >
+        {isReal ? `#${child.issueNumber}` : '—'}
+      </span>
+      <span
+        className={`kb-tag kb-tag-${child.kind === 'bug' ? 'BUG' : 'FEAT'}`}
+        style={{ flexShrink: 0 }}
+      >
+        {child.kind === 'bug' ? 'BUG' : 'FEAT'}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          color: 'var(--ink-1)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {child.title}
+      </span>
+      {child.persona ? (
+        <span style={{ color: 'var(--ink-3)', fontSize: 11 }}>{child.persona}</span>
+      ) : null}
+      <span
+        style={{
+          color:
+            child.status === 'complete'
+              ? 'var(--review)'
+              : child.status === 'failed' || child.status === 'stopped' || child.status === 'skipped'
+                ? 'var(--failed)'
+                : 'var(--running)',
+          fontSize: 11,
+          minWidth: 64,
+          textAlign: 'right',
+        }}
+      >
+        {child.status}
+      </span>
+    </a>
   );
 }
 

@@ -1,6 +1,7 @@
 import type { IssueSource } from '@kanbots/core';
 import type { Store } from '@kanbots/local-store';
 import type { AgentSupervisor } from '../agent-runs/supervisor.js';
+import type { AutopilotManager } from '../autopilot/orchestrator.js';
 import type {
   Config,
   DraftIssueFn,
@@ -17,6 +18,7 @@ export interface HandlerDeps {
   supervisor: AgentSupervisor;
   draftIssue: DraftIssueFn;
   suggestIssue: SuggestFeatureFn;
+  autopilot: AutopilotManager;
 }
 
 export interface SubscriptionRegisterArgs {

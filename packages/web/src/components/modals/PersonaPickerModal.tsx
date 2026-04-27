@@ -1,12 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPersona, deletePersona, listPersonas, type Persona } from '../../personas.js';
 
 export interface PersonaPickerModalProps {
   onClose: () => void;
   onPick: (persona: Persona) => void;
+  /** If true, the user can pick multiple personas before confirming. */
+  multiSelect?: boolean;
+  /** Confirm button label override in multi-select mode. */
+  multiSelectConfirmLabel?: string;
+  /** Called with the selected personas when the user confirms in multi-select mode. */
+  onConfirm?: (personas: Persona[]) => void;
+  /** Headline shown next to the kanbots crumb. */
+  title?: string;
+  /** Subhead shown above the persona grid. */
+  subtitle?: string;
 }
 
-export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps) {
+export function PersonaPickerModal({
+  onClose,
+  onPick,
+  multiSelect = false,
+  multiSelectConfirmLabel,
+  onConfirm,
+  title,
+  subtitle,
+}: PersonaPickerModalProps) {
   const [personas, setPersonas] = useState<Persona[]>(() => listPersonas());
   const [creating, setCreating] = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -14,6 +32,12 @@ export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps)
   const [draftTagline, setDraftTagline] = useState('');
   const [draftPrompt, setDraftPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+
+  const selectedPersonas = useMemo(
+    () => personas.filter((p) => selectedIds.has(p.id)),
+    [personas, selectedIds],
+  );
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent): void {
@@ -57,7 +81,41 @@ export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps)
     reload();
     resetDraft();
     setCreating(false);
-    onPick(created);
+    if (multiSelect) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.add(created.id);
+        return next;
+      });
+    } else {
+      onPick(created);
+    }
+  }
+
+  function handleCardClick(persona: Persona): void {
+    if (!multiSelect) {
+      onPick(persona);
+      return;
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(persona.id)) {
+        next.delete(persona.id);
+      } else {
+        next.add(persona.id);
+      }
+      return next;
+    });
+  }
+
+  function handleConfirm(): void {
+    if (!multiSelect || selectedPersonas.length === 0) return;
+    if (onConfirm) {
+      onConfirm(selectedPersonas);
+    } else {
+      // Backwards-compat fallback: emit each pick individually.
+      for (const p of selectedPersonas) onPick(p);
+    }
   }
 
   function removeCustom(id: string): void {
@@ -73,7 +131,7 @@ export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps)
             <b>kanbots</b>
           </span>
           <span style={{ color: 'var(--ink-4)' }}>·</span>
-          <h2>Pick a perspective</h2>
+          <h2>{title ?? 'Pick a perspective'}</h2>
           <span className="grow" />
           <button type="button" className="x-btn" onClick={onClose} aria-label="Close">
             <svg
@@ -92,24 +150,41 @@ export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps)
         <div className="kb-modal-body" style={{ display: 'block', overflowY: 'auto' }}>
           <div style={{ padding: '18px 22px' }}>
             <div style={{ marginBottom: 16, color: 'var(--ink-2)', fontSize: 12.5 }}>
-              Claude will look at your repo and the backlog through the lens you pick. Feature suggestions
-              shift accordingly.
+              {subtitle ??
+                'Claude will look at your repo and the backlog through the lens you pick. Feature suggestions shift accordingly.'}
             </div>
 
             <div className="kb-persona-grid">
-              {personas.map((p) => (
+              {personas.map((p) => {
+                const isSelected = multiSelect && selectedIds.has(p.id);
+                return (
                 <button
                   key={p.id}
                   type="button"
-                  className="kb-persona-card"
-                  onClick={() => onPick(p)}
+                  className={`kb-persona-card${isSelected ? ' selected' : ''}`}
+                  onClick={() => handleCardClick(p)}
                   title={p.prompt}
+                  aria-pressed={multiSelect ? isSelected : undefined}
                 >
                   <div className="kb-persona-emoji" aria-hidden>
                     {p.emoji}
                   </div>
                   <div className="kb-persona-name">{p.name}</div>
                   <div className="kb-persona-tagline">{p.tagline}</div>
+                  {multiSelect && isSelected ? (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 10,
+                        fontSize: 11,
+                        color: 'var(--accent)',
+                      }}
+                      aria-hidden
+                    >
+                      ✓
+                    </span>
+                  ) : null}
                   {!p.builtIn ? (
                     <span
                       className="kb-persona-del"
@@ -132,7 +207,8 @@ export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps)
                     </span>
                   ) : null}
                 </button>
-              ))}
+                );
+              })}
 
               {!creating ? (
                 <button
@@ -239,6 +315,18 @@ export function PersonaPickerModal({ onClose, onPick }: PersonaPickerModalProps)
           <button type="button" className="kb-btn ghost" onClick={onClose}>
             Cancel
           </button>
+          {multiSelect ? (
+            <button
+              type="button"
+              className="kb-btn primary"
+              disabled={selectedPersonas.length === 0}
+              onClick={handleConfirm}
+              style={{ marginLeft: 8 }}
+            >
+              {multiSelectConfirmLabel ??
+                `Use ${selectedPersonas.length} persona${selectedPersonas.length === 1 ? '' : 's'}`}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
