@@ -255,6 +255,108 @@
   color: var(--ink);
   background: var(--bg-2);
 }
+.kb-col-head .kb-col-suggest {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-1);
+  background: var(--bg-2);
+  border: 1px solid var(--hairline);
+  cursor: pointer;
+  transition: 120ms ease;
+}
+.kb-col-head .kb-col-add ~ .kb-col-suggest {
+  margin-left: 0;
+}
+.kb-col-head .kb-col-suggest:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--bg-3, var(--bg-2));
+  border-color: var(--ink-4);
+}
+.kb-col-head .kb-col-suggest:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+.kb-col-head .kb-col-suggest svg {
+  flex-shrink: 0;
+}
+.kb-col-head .kb-col-suggest[aria-busy='true'] svg {
+  animation: kb-suggest-spin 1.4s linear infinite;
+}
+@keyframes kb-suggest-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Suggest skeleton card ---------- */
+.kb-card.kb-card-skeleton {
+  cursor: progress;
+  pointer-events: none;
+  position: relative;
+  overflow: hidden;
+}
+.kb-card.kb-card-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--ink) 6%, transparent) 50%,
+    transparent 100%
+  );
+  animation: kb-skel-shimmer 1.4s ease-in-out infinite;
+}
+.kb-skel {
+  display: inline-block;
+  background: color-mix(in oklch, var(--ink) 9%, transparent);
+  border-radius: 4px;
+  height: 10px;
+}
+.kb-skel-num {
+  width: 28px;
+}
+.kb-skel-tag {
+  width: 36px;
+  height: 12px;
+  border-radius: 999px;
+}
+.kb-skel-line {
+  display: block;
+  width: 100%;
+  height: 12px;
+}
+.kb-skel-title {
+  height: 14px;
+  width: 90%;
+}
+.kb-skel-line-short {
+  width: 60%;
+}
+.kb-skel-pill {
+  width: 48px;
+  height: 14px;
+  border-radius: 999px;
+}
+.kb-skel-pill-sm {
+  width: 32px;
+}
+@keyframes kb-skel-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
 .kb-col-list {
   display: flex;
   flex-direction: column;

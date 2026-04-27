@@ -24,7 +24,7 @@ import type {
 import * as workspace from './workspace.js';
 
 export type { CreateHandlersOptions, HandlerDeps, SubscriptionRegistry };
-export type { Config, DraftIssueFn } from './types.js';
+export type { Config, DraftIssueFn, SuggestFeatureFn } from './types.js';
 export type { RunCheckImpl } from './agent-checks.js';
 export type { StartPreviewImpl } from './agent-preview.js';
 
@@ -65,16 +65,20 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
       agentPreview.startRunPreview(deps, args),
     'agent-runs:preview:stop': (args) => agentPreview.stopRunPreview(deps, args),
     'agent-runs:fork': (args) => agentRuns.fork(deps, args),
+    'agent-runs:promote-commit': (args) => agentRuns.promoteCommit(deps, args),
+    'agent-runs:promote-pr': (args) => agentRuns.promotePr(deps, args),
     'agent-runs:events:subscribe': (args) => agentEvents.subscribe(opts, args),
     'agent-runs:events:unsubscribe': (args) =>
       agentEvents.unsubscribe(opts, args),
     'cards:resolve': (args) => cards.resolve(deps, args),
+    'cards:dismiss': (args) => cards.dismiss(deps, args),
     'decisions:pending': () => decisions.pending(deps),
     'cost:today': () => cost.today(deps),
     'workspace:get': () => workspace.getWorkspace(deps),
     'folders:list': () => workspace.listFolders(deps),
     'folders:add': (args) => workspace.addFolder(deps, args),
     'composer:draft': (args) => composer.draft(deps, args),
+    'composer:suggest': (args) => composer.suggest(deps, args),
     'attachments:upload': (args) => attachments.upload(deps, args),
   };
   return map;

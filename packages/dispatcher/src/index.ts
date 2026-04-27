@@ -3,11 +3,16 @@ export const PACKAGE_NAME = '@kanbots/dispatcher';
 export {
   ComposerError,
   createComposer,
+  createSuggester,
+  type BacklogEntry,
   type CreateComposerOptions,
+  type CreateSuggesterOptions,
   type DraftedIssue,
   type DraftIssueFn,
   type DraftIssueInput,
   type SpawnFn,
+  type SuggestFeatureFn,
+  type SuggestFeatureInput,
 } from './composer.js';
 
 export { parseStreamLine, makeLineSplitter, type StreamEvent } from './stream-parser.js';

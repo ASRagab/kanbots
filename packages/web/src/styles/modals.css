@@ -135,6 +135,101 @@
   flex: 1;
 }
 
+/* ---- Persona picker ---- */
+.kb-persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.kb-persona-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 4px;
+  padding: 14px 12px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  font-family: var(--ff-sans);
+  transition: 120ms ease;
+}
+.kb-persona-card:hover {
+  background: var(--bg-2);
+  border-color: var(--ink-4);
+  transform: translateY(-1px);
+}
+.kb-persona-card:focus-visible {
+  outline: 2px solid var(--accent, var(--ink-2));
+  outline-offset: 2px;
+}
+.kb-persona-emoji {
+  font-size: 22px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+.kb-persona-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.kb-persona-tagline {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  line-height: 1.35;
+}
+.kb-persona-card-add {
+  border-style: dashed;
+  background: transparent;
+}
+.kb-persona-card-add .kb-persona-emoji {
+  color: var(--ink-3);
+  font-weight: 300;
+  font-size: 26px;
+}
+.kb-persona-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--ink-3);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.kb-persona-card:hover .kb-persona-del,
+.kb-persona-del:focus {
+  opacity: 1;
+}
+.kb-persona-del:hover {
+  color: var(--failed);
+  background: var(--bg-2);
+}
+.kb-persona-create {
+  margin-top: 18px;
+  padding: 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+}
+.kb-persona-create-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
 /* ---- Task Detail hero ---- */
 .kb-tdm-hero {
   padding: 22px 26px 18px;

@@ -32,6 +32,11 @@ export interface ResolveCardResult {
   run: AgentRun;
 }
 
+export interface DismissCardResult {
+  card: Card;
+  run: AgentRun;
+}
+
 export interface PostMessageOptions {
   dispatch?: boolean;
   model?: string;
@@ -137,6 +142,8 @@ export const api = {
   createIssue: (input: CreateIssueInput): Promise<Issue> => invoke('issues:create', input),
   draftIssue: (description: string): Promise<DraftedIssue> =>
     invoke('composer:draft', { description }),
+  suggestFeature: (personaPrompt: string): Promise<DraftedIssue> =>
+    invoke('composer:suggest', { personaPrompt }),
   startAgent: (
     issueNumber: number,
     input: {
@@ -231,10 +238,20 @@ export const api = {
     runId: number,
   ): Promise<{ source: number; run: AgentRun; worktree: string; branch: string }> =>
     invoke('agent-runs:fork', { runId }),
+  promoteCommit: (
+    runId: number,
+  ): Promise<ChannelResult<'agent-runs:promote-commit'>> =>
+    invoke('agent-runs:promote-commit', { runId }),
+  promotePR: (
+    runId: number,
+  ): Promise<ChannelResult<'agent-runs:promote-pr'>> =>
+    invoke('agent-runs:promote-pr', { runId }),
   costToday: (): Promise<{ totalUsd: number; since: string }> =>
     invoke('cost:today', undefined),
   resolveCard: (cardId: number, value: string): Promise<ResolveCardResult> =>
     invoke('cards:resolve', { cardId, value }),
+  dismissCard: (cardId: number): Promise<DismissCardResult> =>
+    invoke('cards:dismiss', { cardId }),
   uploadAttachment: async (file: Blob): Promise<UploadAttachmentResult> => {
     const data = new Uint8Array(await file.arrayBuffer());
     return invoke('attachments:upload', {

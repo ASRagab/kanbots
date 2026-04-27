@@ -8,9 +8,10 @@ import {
   reconcileIssueLabels,
   type AgentSupervisor,
   type DraftIssueFn,
+  type SuggestFeatureFn,
 } from '@kanbots/api';
 import { GitHubClient, resolveGitHubToken, type IssueSource } from '@kanbots/core';
-import { createComposer } from '@kanbots/dispatcher';
+import { createComposer, createSuggester } from '@kanbots/dispatcher';
 import {
   describeKanbotsDir,
   ensureGitignoreEntry,
@@ -43,6 +44,7 @@ interface ActiveWorkspace {
   source: IssueSource;
   supervisor: AgentSupervisor;
   draftIssue: DraftIssueFn;
+  suggestIssue: SuggestFeatureFn;
   subscriptions: OwnedSubscriptionRegistry;
   unregisterHandlers: () => void;
   ownerId: number;
@@ -171,8 +173,27 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     throw err;
   }
 
-  const supervisor = createSupervisor({ store, repoPath: gitRoot });
+  const supervisor = createSupervisor({
+    store,
+    repoPath: gitRoot,
+    onRunComplete: async (run) => {
+      try {
+        const thread = store.threads.findById(run.threadId);
+        if (!thread) return;
+        const issue = await source.getIssue(thread.issueNumber);
+        if (issue.labels.includes('archived')) return;
+        const labels = issue.labels.filter(
+          (l) => !l.startsWith('status:') && !l.startsWith('agent:'),
+        );
+        labels.push('status:review', 'agent:idle');
+        await source.updateIssue(thread.issueNumber, { labels });
+      } catch {
+        // best-effort: don't let label errors crash the supervisor
+      }
+    },
+  });
   const draftIssue = createComposer({ cwd: gitRoot });
+  const suggestIssue = createSuggester({ cwd: gitRoot });
 
   // Demote any in-progress / agent-running labels left over from a previous
   // session. The supervisor sweep above marked stale runs failed; this
@@ -208,7 +229,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     },
   });
   const handlers = createHandlers({
-    deps: { source, store, config: apiConfig, supervisor, draftIssue },
+    deps: { source, store, config: apiConfig, supervisor, draftIssue, suggestIssue },
     subscriptions,
   });
   const unregisterHandlers = registerHandlers(handlers, subscriptions);
@@ -240,6 +261,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     source,
     supervisor,
     draftIssue,
+    suggestIssue,
     subscriptions,
     unregisterHandlers,
     ownerId,

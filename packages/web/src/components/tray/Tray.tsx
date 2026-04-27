@@ -70,6 +70,21 @@ export function Tray({ onJump }: TrayProps) {
     }
   }
 
+  async function dismiss(card: PendingDecisionPayload): Promise<void> {
+    if (submitting !== null) return;
+    setSubmitting(card.cardId);
+    setError(null);
+    try {
+      await api.dismissCard(card.cardId);
+      window.dispatchEvent(new CustomEvent(RESOLVED_EVENT));
+      setItems((prev) => prev.filter((c) => c.cardId !== card.cardId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
   return (
     <div className="kb-tray kb-app" role="region" aria-label="Pending decisions">
       <div className="kb-tray-head">
@@ -119,6 +134,16 @@ export function Tray({ onJump }: TrayProps) {
                     {submitting === item.cardId ? '…' : opt.label}
                   </button>
                 ))}
+                <button
+                  key="__dismiss"
+                  type="button"
+                  className="o dismiss"
+                  disabled={submitting === item.cardId}
+                  onClick={() => void dismiss(item)}
+                  title="Dismiss this decision and stop the run"
+                >
+                  Dismiss
+                </button>
               </div>
             </button>
           );

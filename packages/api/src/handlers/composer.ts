@@ -1,5 +1,6 @@
+import { statusFromLabels } from '@kanbots/core';
 import { z } from 'zod';
-import type { DraftedIssue } from '../bridge.js';
+import type { DraftedIssue, SuggestFeatureBacklogEntry } from '../bridge.js';
 import { parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
 
@@ -19,4 +20,33 @@ export async function draft(
 ): Promise<DraftedIssue> {
   const parsed = parseArgs(draftSchema, args);
   return deps.draftIssue({ description: parsed.description });
+}
+
+const BACKLOG_SAMPLE_LIMIT = 30;
+
+const suggestSchema = z
+  .object({
+    personaPrompt: z.string().min(1).max(8_000),
+  })
+  .strict();
+
+export interface SuggestArgs {
+  personaPrompt: string;
+}
+
+export async function suggest(
+  deps: HandlerDeps,
+  args: SuggestArgs,
+): Promise<DraftedIssue> {
+  const parsed = parseArgs(suggestSchema, args);
+  const issues = await deps.source.listIssues({ state: 'open' });
+  const backlog: SuggestFeatureBacklogEntry[] = issues
+    .filter((issue) => statusFromLabels(issue.labels) === 'backlog')
+    .slice(0, BACKLOG_SAMPLE_LIMIT)
+    .map((issue) => {
+      const entry: SuggestFeatureBacklogEntry = { title: issue.title };
+      if (issue.body) entry.body = issue.body;
+      return entry;
+    });
+  return deps.suggestIssue({ backlog, personaPrompt: parsed.personaPrompt });
 }

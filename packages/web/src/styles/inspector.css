@@ -425,6 +425,15 @@
   color: oklch(0.2 0.04 70);
   border-color: var(--awaiting);
 }
+.kb-decision-opt.dismiss {
+  color: var(--ink-3);
+  border-style: dashed;
+}
+.kb-decision-opt.dismiss:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--failed);
+  color: var(--failed);
+}
 .kb-decision-opt .num {
   font-family: var(--ff-mono);
   font-size: 10px;

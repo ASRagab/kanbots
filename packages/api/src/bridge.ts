@@ -17,6 +17,7 @@ import type {
   Comment,
   CreateIssueInput,
   Issue,
+  PullRequest,
   StatusKey,
   UpdateIssuePatch,
 } from '@kanbots/core';
@@ -65,6 +66,18 @@ export interface DraftedIssue {
 }
 
 export type DraftIssueFn = (input: DraftIssueInput) => Promise<DraftedIssue>;
+
+export interface SuggestFeatureBacklogEntry {
+  title: string;
+  body?: string;
+}
+
+export interface SuggestFeatureInput {
+  backlog: SuggestFeatureBacklogEntry[];
+  personaPrompt: string;
+}
+
+export type SuggestFeatureFn = (input: SuggestFeatureInput) => Promise<DraftedIssue>;
 
 export interface IssueActiveRunPayload {
   id: number;
@@ -134,6 +147,11 @@ export interface ResolveCardResult {
   run: AgentRun;
 }
 
+export interface DismissCardResult {
+  card: Card;
+  run: AgentRun;
+}
+
 export interface ForkRunResult {
   source: number;
   run: AgentRun;
@@ -145,6 +163,15 @@ export interface RunStatsResult {
   additions: number;
   deletions: number;
   filesChanged: number;
+}
+
+export interface PromoteCommitResult {
+  commitSha: string;
+  base: string;
+}
+
+export interface PromotePrResult {
+  pr: PullRequest;
 }
 
 export interface EventSubscribeResult {
@@ -301,6 +328,14 @@ export interface BridgeChannels {
     result: PreviewStatePayload;
   };
   'agent-runs:fork': { args: { runId: number }; result: ForkRunResult };
+  'agent-runs:promote-commit': {
+    args: { runId: number };
+    result: PromoteCommitResult;
+  };
+  'agent-runs:promote-pr': {
+    args: { runId: number };
+    result: PromotePrResult;
+  };
   'agent-runs:events:subscribe': {
     args: { runId: number; sinceSeq?: number };
     result: EventSubscribeResult;
@@ -313,6 +348,10 @@ export interface BridgeChannels {
     args: { cardId: number; value: string };
     result: ResolveCardResult;
   };
+  'cards:dismiss': {
+    args: { cardId: number };
+    result: DismissCardResult;
+  };
   'decisions:pending': { args: void; result: PendingDecisionPayload[] };
   'cost:today': { args: void; result: CostTodayResult };
   'workspace:get': { args: void; result: Workspace };
@@ -322,6 +361,7 @@ export interface BridgeChannels {
     result: WorkspaceFolderPayload;
   };
   'composer:draft': { args: { description: string }; result: DraftedIssue };
+  'composer:suggest': { args: { personaPrompt: string }; result: DraftedIssue };
   'attachments:upload': {
     args: { contentType: string; data: Uint8Array };
     result: UploadAttachmentResult;

@@ -5,9 +5,10 @@ import type {
   Config,
   DraftIssueFn,
   EventSubscribeResult,
+  SuggestFeatureFn,
 } from '../bridge.js';
 
-export type { Config, DraftIssueFn, EventSubscribeResult };
+export type { Config, DraftIssueFn, EventSubscribeResult, SuggestFeatureFn };
 
 export interface HandlerDeps {
   source: IssueSource;
@@ -15,6 +16,7 @@ export interface HandlerDeps {
   config: Config;
   supervisor: AgentSupervisor;
   draftIssue: DraftIssueFn;
+  suggestIssue: SuggestFeatureFn;
 }
 
 export interface SubscriptionRegisterArgs {

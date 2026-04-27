@@ -235,6 +235,8 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                       activeRun={activeRun}
                       displayRun={displayRun}
                       messages={messages}
+                      issueNumber={issueNumber}
+                      onActionDone={() => void refetch()}
                     />
                   ) : null}
                   {tab === 'diff' ? <DiffTabModal activeRun={displayRun} /> : null}
@@ -554,10 +556,14 @@ function ThreadTab({
   activeRun,
   displayRun,
   messages,
+  issueNumber,
+  onActionDone,
 }: {
   activeRun: AgentRun | null;
   displayRun: AgentRun | null;
   messages: Message[];
+  issueNumber: number;
+  onActionDone: () => void;
 }) {
   const stream = useAgentRunStream(displayRun?.id ?? null);
   const isLive = activeRun !== null && activeRun.id === displayRun?.id;
@@ -579,7 +585,12 @@ function ThreadTab({
       cards: cardsByMessageId.get(m.id) ?? [],
     });
   }
+  let latestTool: AgentEvent | null = null;
   for (const e of stream.events) {
+    if (e.type === 'tool_use') {
+      if (latestTool === null || e.seq > latestTool.seq) latestTool = e;
+      continue;
+    }
     items.push({ kind: 'event', sortKey: e.createdAt, id: `e${e.id}`, event: e });
   }
   items.sort((a, b) => {
@@ -587,7 +598,10 @@ function ThreadTab({
     return a.sortKey < b.sortKey ? -1 : 1;
   });
 
-  if (items.length === 0) {
+  const lastLoggedKey = items.length > 0 ? items[items.length - 1]!.sortKey : '';
+  const showLatestTool = latestTool !== null && latestTool.createdAt > lastLoggedKey;
+
+  if (items.length === 0 && !showLatestTool) {
     return (
       <div className="kb-tdm-section">
         <h3>Agent thread</h3>
@@ -617,7 +631,116 @@ function ThreadTab({
             <EventRow key={it.id} event={it.event} isLive={isLive} />
           ),
         )}
+        {showLatestTool && latestTool ? (
+          <EventRow key="latest-tool" event={latestTool} isLive={isLive} />
+        ) : null}
+        {displayRun && displayRun.status === 'complete' ? (
+          <CompletionActions
+            runId={displayRun.id}
+            issueNumber={issueNumber}
+            onChanged={onActionDone}
+          />
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+function CompletionActions({
+  runId,
+  issueNumber,
+  onChanged,
+}: {
+  runId: number;
+  issueNumber: number;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  async function call<T>(
+    name: string,
+    fn: () => Promise<T>,
+    success: (r: T) => string,
+  ): Promise<void> {
+    setBusy(name);
+    setError(null);
+    setInfo(null);
+    try {
+      const r = await fn();
+      setInfo(success(r));
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        border: '1px solid var(--accent-line)',
+        borderRadius: 8,
+        padding: 12,
+        background: 'color-mix(in oklch, var(--bg-1) 80%, var(--accent-soft))',
+      }}
+    >
+      <div style={{ fontSize: 12, color: 'var(--ink-2)', marginBottom: 8 }}>
+        <b style={{ color: 'var(--accent)' }}>Run complete.</b> What's next?
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <button
+          type="button"
+          className="kb-btn ghost"
+          disabled={busy !== null}
+          onClick={() =>
+            void call(
+              'review',
+              () => api.spawnReviewer(issueNumber),
+              (r) => `Review agent started — run #${r.id}`,
+            )
+          }
+        >
+          {busy === 'review' ? 'Spawning…' : 'Review code'}
+        </button>
+        <button
+          type="button"
+          className="kb-btn ghost"
+          disabled={busy !== null}
+          onClick={() => {
+            if (!window.confirm('Squash-merge this run into the base branch?')) return;
+            void call(
+              'commit',
+              () => api.promoteCommit(runId),
+              (r) => `Committed ${r.commitSha.slice(0, 7)} on ${r.base}`,
+            );
+          }}
+        >
+          {busy === 'commit' ? 'Committing…' : 'Commit to base branch'}
+        </button>
+        <button
+          type="button"
+          className="kb-btn ghost"
+          disabled={busy !== null}
+          onClick={() =>
+            void call(
+              'pr',
+              () => api.promotePR(runId),
+              (r) => `PR opened: ${r.pr.htmlUrl}`,
+            )
+          }
+        >
+          {busy === 'pr' ? 'Opening…' : 'Open PR'}
+        </button>
+      </div>
+      {info ? (
+        <div style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 8 }}>{info}</div>
+      ) : null}
+      {error ? (
+        <div style={{ fontSize: 11, color: 'var(--failed)', marginTop: 8 }}>error: {error}</div>
+      ) : null}
     </div>
   );
 }
@@ -676,14 +799,28 @@ function MessageRow({ message, cards }: { message: Message; cards: Card[] }) {
 function DecisionInline({ card }: { card: Card<DecisionPayload> }) {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const isPending = card.status === 'pending';
   const isResolved = card.status === 'resolved';
+  const isDismissed = card.status === 'dismissed';
 
   async function pick(value: string): Promise<void> {
-    if (isResolved || submitting !== null) return;
+    if (!isPending || submitting !== null) return;
     setSubmitting(value);
     setError(null);
     try {
       await api.resolveCard(card.id, value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSubmitting(null);
+    }
+  }
+
+  async function dismiss(): Promise<void> {
+    if (!isPending || submitting !== null) return;
+    setSubmitting('__dismiss');
+    setError(null);
+    try {
+      await api.dismissCard(card.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSubmitting(null);
@@ -698,17 +835,28 @@ function DecisionInline({ card }: { card: Card<DecisionPayload> }) {
             key={opt.value}
             type="button"
             className={`kb-decision-opt${submitting === opt.value ? ' chosen' : ''}`}
-            disabled={isResolved || submitting !== null}
+            disabled={!isPending || submitting !== null}
             onClick={() => void pick(opt.value)}
           >
             <span className="num">{i + 1}</span>
             {opt.label}
           </button>
         ))}
+        {isPending ? (
+          <button
+            key="__dismiss"
+            type="button"
+            className="kb-decision-opt dismiss"
+            disabled={submitting !== null}
+            onClick={() => void dismiss()}
+            title="Dismiss this decision and stop the run"
+          >
+            Dismiss
+          </button>
+        ) : null}
       </div>
-      {isResolved ? (
-        <div className="kb-decision-resolved-note">resolved</div>
-      ) : null}
+      {isResolved ? <div className="kb-decision-resolved-note">resolved</div> : null}
+      {isDismissed ? <div className="kb-decision-resolved-note">dismissed</div> : null}
       {error ? <div className="kb-decision-resolved-note">error: {error}</div> : null}
     </div>
   );

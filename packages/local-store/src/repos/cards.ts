@@ -155,6 +155,7 @@ export class CardsRepo {
          JOIN threads t ON ar.thread_id = t.id
          WHERE t.repo_owner = ? AND t.repo_name = ?
            AND c.status = 'pending' AND c.type = 'decision'
+           AND ar.status = 'awaiting_input'
          ORDER BY c.id`,
       )
       .all(repoOwner, repoName) as Array<
@@ -165,5 +166,38 @@ export class CardsRepo {
       agentRunId: row.run_id_alias,
       issueNumber: row.issue_number_alias,
     }));
+  }
+
+  dismissPendingDecisionsForRun(agentRunId: AgentRunId): number {
+    const result = this.db
+      .prepare(
+        `UPDATE cards SET status = 'dismissed'
+         WHERE id IN (
+           SELECT c.id FROM cards c
+           JOIN messages m ON c.message_id = m.id
+           WHERE m.agent_run_id = ?
+             AND c.status = 'pending'
+             AND c.type = 'decision'
+         )`,
+      )
+      .run(agentRunId);
+    return result.changes;
+  }
+
+  dismissOrphanPendingDecisions(): number {
+    const result = this.db
+      .prepare(
+        `UPDATE cards SET status = 'dismissed'
+         WHERE id IN (
+           SELECT c.id FROM cards c
+           JOIN messages m ON c.message_id = m.id
+           JOIN agent_runs ar ON m.agent_run_id = ar.id
+           WHERE c.status = 'pending'
+             AND c.type = 'decision'
+             AND ar.status NOT IN ('starting', 'running', 'awaiting_input')
+         )`,
+      )
+      .run();
+    return result.changes;
   }
 }

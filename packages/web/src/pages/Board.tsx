@@ -12,12 +12,14 @@ import { useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { CardPreview } from '../components/Card.js';
 import { Column } from '../components/Column.js';
+import { PersonaPickerModal } from '../components/modals/PersonaPickerModal.js';
 import { useBoardAgentStreams } from '../hooks/useBoardAgentStreams.js';
 import { useBoardFilters } from '../hooks/useBoardFilters.js';
 import { useFetch } from '../hooks/useFetch.js';
 import { useIssues, dispatchIssuesRefetch } from '../hooks/useIssues.js';
 import { useSelection } from '../hooks/useSelection.js';
 import { COLUMNS, withStatus } from '../labels.js';
+import type { Persona } from '../personas.js';
 import type { Issue, StatusKey } from '../types.js';
 
 const STATUS_KEYS: readonly StatusKey[] = ['backlog', 'todo', 'inProgress', 'review', 'done'];
@@ -102,6 +104,8 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
 
   const [activeNumber, setActiveNumber] = useState<number | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   const [selectedNumber, setSelectedNumber] = useSelection();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -191,6 +195,32 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
         const message = err instanceof Error ? err.message : String(err);
         setMoveError(`Moved #${issueNumber}, but couldn't start an agent: ${message}`);
       }
+    }
+  }
+
+  function openPersonaPicker(): void {
+    if (suggesting) return;
+    setPersonaPickerOpen(true);
+  }
+
+  async function runSuggestionWith(persona: Persona): Promise<void> {
+    setPersonaPickerOpen(false);
+    if (suggesting) return;
+    setSuggesting(true);
+    setMoveError(null);
+    try {
+      const drafted = await api.suggestFeature(persona.prompt);
+      await api.createIssue({
+        title: drafted.title,
+        body: drafted.body,
+        labels: ['status:backlog', 'type:feat'],
+      });
+      dispatchIssuesRefetch();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setMoveError(`Couldn't suggest a feature: ${message}`);
+    } finally {
+      setSuggesting(false);
     }
   }
 
@@ -338,12 +368,21 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
               setSelectedNumber(n);
               onOpenDetail?.(n);
             }}
+            {...(col.key === 'backlog'
+              ? { onSuggest: openPersonaPicker, suggesting }
+              : {})}
           />
         ))}
       </div>
       <DragOverlay dropAnimation={null}>
         {activeIssue ? <CardPreview issue={activeIssue} /> : null}
       </DragOverlay>
+      {personaPickerOpen ? (
+        <PersonaPickerModal
+          onClose={() => setPersonaPickerOpen(false)}
+          onPick={(persona) => void runSuggestionWith(persona)}
+        />
+      ) : null}
     </DndContext>
   );
 }

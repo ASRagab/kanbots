@@ -9,6 +9,8 @@ import type {
   DiffFileStatus,
   DiffPayload,
   ForkRunResult,
+  PromoteCommitResult,
+  PromotePrResult,
   RunStatsResult,
 } from '../bridge.js';
 import { badRequest, notFound, parseArgs } from './errors.js';
@@ -136,6 +138,92 @@ export async function fork(
     ...(source.model ? { model: source.model } : {}),
   });
   return { source: parsed.runId, run, worktree: newWorktreePath, branch: newBranch };
+}
+
+export async function promoteCommit(
+  deps: HandlerDeps,
+  args: RunIdArgs,
+): Promise<PromoteCommitResult> {
+  const parsed = parseArgs(idSchema, args);
+  const repoPath = deps.config.repoPath;
+  if (!repoPath) throw badRequest('repoPath is not configured');
+  const run = deps.store.agentRuns.findById(parsed.runId);
+  if (!run) throw notFound(`run ${parsed.runId} not found`);
+  if (!run.worktreePath || !run.branchName) {
+    throw badRequest('run has no worktree or branch to promote');
+  }
+  const thread = deps.store.threads.findById(run.threadId);
+  if (!thread) throw badRequest('run has no thread');
+  const issue = await deps.source.getIssue(thread.issueNumber);
+
+  const base = await detectLocalBase(repoPath);
+  const stamp = Date.now().toString(36);
+  const tmpPath = `${repoPath}/.kanbots/promote/${parsed.runId}-${stamp}`;
+  await mkdir(dirname(tmpPath), { recursive: true });
+  await execFileAsync('git', ['worktree', 'add', tmpPath, base], { cwd: repoPath });
+  try {
+    await execFileAsync('git', ['merge', '--squash', run.branchName], { cwd: tmpPath });
+    const message = `Issue #${issue.number}: ${issue.title}`;
+    await execFileAsync('git', ['commit', '-m', message], { cwd: tmpPath });
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: tmpPath });
+    return { commitSha: stdout.trim(), base };
+  } finally {
+    await execFileAsync(
+      'git',
+      ['worktree', 'remove', '--force', tmpPath],
+      { cwd: repoPath },
+    ).catch(() => undefined);
+  }
+}
+
+export async function promotePr(
+  deps: HandlerDeps,
+  args: RunIdArgs,
+): Promise<PromotePrResult> {
+  const parsed = parseArgs(idSchema, args);
+  if (deps.config.mode !== 'github') {
+    throw badRequest('PR creation requires github mode');
+  }
+  const openDraftPR = deps.source.openDraftPR;
+  if (typeof openDraftPR !== 'function') {
+    throw badRequest('source does not support PR creation');
+  }
+  const repoPath = deps.config.repoPath;
+  if (!repoPath) throw badRequest('repoPath is not configured');
+  const run = deps.store.agentRuns.findById(parsed.runId);
+  if (!run) throw notFound(`run ${parsed.runId} not found`);
+  if (!run.worktreePath || !run.branchName) {
+    throw badRequest('run has no worktree or branch to promote');
+  }
+  const thread = deps.store.threads.findById(run.threadId);
+  if (!thread) throw badRequest('run has no thread');
+  const issue = await deps.source.getIssue(thread.issueNumber);
+
+  await execFileAsync('git', ['push', '-u', 'origin', run.branchName], {
+    cwd: run.worktreePath,
+  });
+
+  const base = (await detectLocalBase(repoPath)).replace(/^origin\//, '');
+  const pr = await openDraftPR.call(deps.source, {
+    title: issue.title,
+    ...(issue.body ? { body: issue.body } : {}),
+    head: run.branchName,
+    base,
+    issueNumber: issue.number,
+  });
+  return { pr };
+}
+
+async function detectLocalBase(repoPath: string): Promise<string> {
+  for (const ref of ['main', 'master']) {
+    try {
+      await execFileAsync('git', ['rev-parse', '--verify', ref], { cwd: repoPath });
+      return ref;
+    } catch {
+      // try next
+    }
+  }
+  throw badRequest('could not find a local main/master branch to promote into');
 }
 
 async function collectDiff(

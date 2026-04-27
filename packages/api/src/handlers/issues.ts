@@ -232,22 +232,40 @@ export async function postMessage(
   let dispatchError: string | null = null;
   if (dispatch) {
     const active = deps.store.agentRuns.findActiveForThread(thread.id);
-    try {
-      if (active && active.status === 'awaiting_input') {
-        await deps.supervisor.resume({ runId: active.id, prompt: parsed.body });
-      } else if (active === null) {
-        await deps.supervisor.start({
-          threadId: thread.id,
-          issueNumber: parsed.number,
-          prompt: parsed.body,
-          ...(parsed.model !== undefined ? { model: parsed.model } : {}),
-          ...(parsed.appendSystemPrompt !== undefined
-            ? { appendSystemPrompt: parsed.appendSystemPrompt }
-            : {}),
-        });
+    const latest = active ?? deps.store.agentRuns.findLatestForThread(thread.id);
+    const willResume =
+      (active !== null && active.status === 'awaiting_input') ||
+      (active === null &&
+        latest !== null &&
+        latest.sessionId !== null &&
+        latest.worktreePath !== null);
+    const willStart = active === null && !willResume;
+    if (willResume || willStart) {
+      try {
+        const issue = await deps.source.getIssue(parsed.number);
+        const taskPrompt = buildTaskSystemPrompt(issue);
+        const appendSystemPrompt =
+          parsed.appendSystemPrompt !== undefined
+            ? `${taskPrompt}\n\n${parsed.appendSystemPrompt}`
+            : taskPrompt;
+        if (willResume && latest !== null) {
+          await deps.supervisor.resume({
+            runId: latest.id,
+            prompt: parsed.body,
+            appendSystemPrompt,
+          });
+        } else {
+          await deps.supervisor.start({
+            threadId: thread.id,
+            issueNumber: parsed.number,
+            prompt: parsed.body,
+            ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+            appendSystemPrompt,
+          });
+        }
+      } catch (err) {
+        dispatchError = err instanceof Error ? err.message : String(err);
       }
-    } catch (err) {
-      dispatchError = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -313,6 +331,7 @@ export async function dispatch(
     threadId: thread.id,
     issueNumber: parsed.number,
     prompt: kickoff,
+    appendSystemPrompt: buildTaskSystemPrompt(issue),
     ...(parsed.model !== undefined ? { model: parsed.model } : {}),
   });
   return { run, message };
@@ -434,6 +453,21 @@ export function buildThreadPayload(
     activeRun,
     latestRun,
   };
+}
+
+export function buildTaskSystemPrompt(issue: {
+  number: number;
+  title: string;
+  body?: string | null;
+}): string {
+  const body = issue.body && issue.body.trim().length > 0 ? issue.body : '(no description)';
+  return `TASK_CONTEXT — this conversation is scoped to a single task in the kanbots project. Use it for every turn.
+
+Task #${issue.number}: ${issue.title}
+
+${body}
+
+When the user says "this task", "this issue", "the ticket", "this ticket", or refers to "the task" without naming another, they always mean Task #${issue.number} above. Do not ask the user which task — proceed on Task #${issue.number}.`;
 }
 
 interface DecisionOption {

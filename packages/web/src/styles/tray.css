@@ -125,6 +125,15 @@
   cursor: not-allowed;
   opacity: 0.5;
 }
+.kb-tray-opts .o.dismiss {
+  color: var(--ink-3);
+  border-style: dashed;
+}
+.kb-tray-opts .o.dismiss:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--failed);
+  color: var(--failed);
+}
 .kb-tray-error {
   padding: 6px 14px;
   color: var(--failed);

@@ -49,9 +49,13 @@ export function makeHandlerTestKit(
     title: `drafted: ${input.description.slice(0, 40)}`,
     body: `# Drafted\n\n${input.description}`,
   });
+  const suggestIssue = async (input: { personaPrompt: string }) => ({
+    title: `suggested feature (${input.personaPrompt.slice(0, 20)})`,
+    body: '# Suggested\n\nstub',
+  });
   const config: Config = { owner: 'octo', repo: 'hello', ...configOverride };
   const handlers = createHandlers({
-    deps: { source, store, config, supervisor, draftIssue },
+    deps: { source, store, config, supervisor, draftIssue, suggestIssue },
     subscriptions: registry,
   });
   return { source, store, supervisor, registry, config, handlers, draftIssue };

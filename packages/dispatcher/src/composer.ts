@@ -10,6 +10,16 @@ export interface DraftedIssue {
   body: string;
 }
 
+export interface BacklogEntry {
+  title: string;
+  body?: string;
+}
+
+export interface SuggestFeatureInput {
+  backlog: BacklogEntry[];
+  personaPrompt: string;
+}
+
 export interface CreateComposerOptions {
   cwd: string;
   command?: string;
@@ -18,6 +28,8 @@ export interface CreateComposerOptions {
   spawn?: SpawnFn;
 }
 
+export type CreateSuggesterOptions = CreateComposerOptions;
+
 export type SpawnFn = (
   command: string,
   args: readonly string[],
@@ -25,6 +37,7 @@ export type SpawnFn = (
 ) => ChildProcess;
 
 export type DraftIssueFn = (input: DraftIssueInput) => Promise<DraftedIssue>;
+export type SuggestFeatureFn = (input: SuggestFeatureInput) => Promise<DraftedIssue>;
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -50,6 +63,27 @@ Rules:
 - Do NOT invent details the user did not provide and that you cannot verify. If something is unclear, write the body so the implementer knows what's underspecified rather than guessing.
 - Output strictly the JSON object matching the schema.
 `;
+
+function buildSuggestSystemPrompt(personaPrompt: string): string {
+  const trimmedPersona = personaPrompt.trim();
+  const persona =
+    trimmedPersona.length > 0
+      ? trimmedPersona
+      : 'You are a product strategist for a software project.';
+  return `${persona}
+
+Look at the repo (use Read/Glob/Grep — start with README.md, package.json, and top-level source dirs) and the backlog the user supplies. Propose ONE concrete next feature or task that fits this project's direction and the perspective described above. Aim for a useful suggestion within a few tool calls — do not exhaustively map the codebase.
+
+Rules:
+- Apply your perspective specifically. The suggestion should clearly reflect what someone in your role would prioritize and why.
+- Pick something the project does not already have and is not already in the backlog. Read the backlog carefully so you don't duplicate.
+- Prefer small/medium scope: something a single agent can ship as one PR.
+- Title: concise, imperative, ≤80 chars, no trailing punctuation.
+- Body: markdown. Explain motivation (framed from your perspective), proposed approach grounded in real files/symbols you've seen, and 2-4 acceptance criteria. Reference paths when you can.
+- Do NOT invent files, modules, or capabilities you have not verified by reading the code. If something is uncertain, say so and let the implementer figure it out rather than guessing.
+- Output strictly the JSON object matching the schema.
+`;
+}
 
 const draftedSchema = z
   .object({
@@ -78,6 +112,89 @@ export class ComposerError extends Error {
   }
 }
 
+interface RunClaudeOptions {
+  command: string;
+  cwd: string;
+  timeoutMs: number;
+  systemPrompt: string;
+  stdin: string;
+  spawn: SpawnFn;
+}
+
+async function runClaudeForDraftedIssue(opts: RunClaudeOptions): Promise<DraftedIssue> {
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--no-session-persistence',
+    '--system-prompt',
+    opts.systemPrompt,
+    '--json-schema',
+    JSON.stringify(ISSUE_JSON_SCHEMA),
+    '--tools',
+    'Read,Glob,Grep',
+  ];
+
+  const child = opts.spawn(opts.command, args, { cwd: opts.cwd });
+  let stdout = '';
+  let stderr = '';
+  let killedByTimeout = false;
+
+  const timer = setTimeout(() => {
+    killedByTimeout = true;
+    child.kill('SIGTERM');
+  }, opts.timeoutMs);
+
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8');
+  });
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8');
+  });
+
+  if (!child.stdin) {
+    clearTimeout(timer);
+    throw new ComposerError('failed to open stdin to claude');
+  }
+  child.stdin.write(opts.stdin);
+  child.stdin.end();
+
+  const exitCode: number = await new Promise((resolve, reject) => {
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 0);
+    });
+  });
+
+  if (killedByTimeout) {
+    throw new ComposerError(`composer timed out after ${opts.timeoutMs}ms`, stderr);
+  }
+  if (exitCode !== 0) {
+    throw new ComposerError(`claude exited with code ${exitCode}`, stderr);
+  }
+
+  const parsedJson = parseJsonOrThrow(stdout, stderr);
+  const result = claudeResultSchema.safeParse(parsedJson);
+  if (!result.success) {
+    throw new ComposerError(`unexpected claude output shape: ${result.error.message}`, stderr);
+  }
+  if (result.data.is_error) {
+    throw new ComposerError(result.data.result ?? 'claude reported an error', stderr);
+  }
+  const drafted = draftedSchema.safeParse(result.data.structured_output);
+  if (!drafted.success) {
+    throw new ComposerError(
+      `agent did not return a valid drafted issue: ${drafted.error.message}`,
+      stderr,
+    );
+  }
+  return drafted.data;
+}
+
 export function createComposer(opts: CreateComposerOptions): DraftIssueFn {
   const command = opts.command ?? 'claude';
   const cwd = opts.cwd;
@@ -86,78 +203,49 @@ export function createComposer(opts: CreateComposerOptions): DraftIssueFn {
   const spawn = opts.spawn ?? nodeSpawn;
 
   return async function draftIssue(input: DraftIssueInput): Promise<DraftedIssue> {
-    const args = [
-      '-p',
-      '--output-format',
-      'json',
-      '--no-session-persistence',
-      '--system-prompt',
+    return runClaudeForDraftedIssue({
+      command,
+      cwd,
+      timeoutMs,
       systemPrompt,
-      '--json-schema',
-      JSON.stringify(ISSUE_JSON_SCHEMA),
-      '--tools',
-      'Read,Glob,Grep',
-    ];
-
-    const child = spawn(command, args, { cwd });
-    let stdout = '';
-    let stderr = '';
-    let killedByTimeout = false;
-
-    const timer = setTimeout(() => {
-      killedByTimeout = true;
-      child.kill('SIGTERM');
-    }, timeoutMs);
-
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
+      stdin: input.description,
+      spawn,
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
-    });
-
-    if (!child.stdin) {
-      clearTimeout(timer);
-      throw new ComposerError('failed to open stdin to claude');
-    }
-    child.stdin.write(input.description);
-    child.stdin.end();
-
-    const exitCode: number = await new Promise((resolve, reject) => {
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        resolve(code ?? 0);
-      });
-    });
-
-    if (killedByTimeout) {
-      throw new ComposerError(`composer timed out after ${timeoutMs}ms`, stderr);
-    }
-    if (exitCode !== 0) {
-      throw new ComposerError(`claude exited with code ${exitCode}`, stderr);
-    }
-
-    const parsedJson = parseJsonOrThrow(stdout, stderr);
-    const result = claudeResultSchema.safeParse(parsedJson);
-    if (!result.success) {
-      throw new ComposerError(`unexpected claude output shape: ${result.error.message}`, stderr);
-    }
-    if (result.data.is_error) {
-      throw new ComposerError(result.data.result ?? 'claude reported an error', stderr);
-    }
-    const drafted = draftedSchema.safeParse(result.data.structured_output);
-    if (!drafted.success) {
-      throw new ComposerError(
-        `agent did not return a valid drafted issue: ${drafted.error.message}`,
-        stderr,
-      );
-    }
-    return drafted.data;
   };
+}
+
+export function createSuggester(opts: CreateSuggesterOptions): SuggestFeatureFn {
+  const command = opts.command ?? 'claude';
+  const cwd = opts.cwd;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const systemPromptOverride = opts.systemPrompt;
+  const spawn = opts.spawn ?? nodeSpawn;
+
+  return async function suggestFeature(input: SuggestFeatureInput): Promise<DraftedIssue> {
+    const systemPrompt = systemPromptOverride ?? buildSuggestSystemPrompt(input.personaPrompt);
+    return runClaudeForDraftedIssue({
+      command,
+      cwd,
+      timeoutMs,
+      systemPrompt,
+      stdin: formatBacklogPrompt(input.backlog),
+      spawn,
+    });
+  };
+}
+
+function formatBacklogPrompt(backlog: BacklogEntry[]): string {
+  if (backlog.length === 0) {
+    return 'The backlog is currently empty. Suggest a strong first task for this project.';
+  }
+  const lines = backlog.map((item, idx) => {
+    const trimmedBody = (item.body ?? '').trim();
+    const summary = trimmedBody.length > 280 ? `${trimmedBody.slice(0, 280)}…` : trimmedBody;
+    return summary
+      ? `${idx + 1}. ${item.title}\n   ${summary.replace(/\n/g, ' ')}`
+      : `${idx + 1}. ${item.title}`;
+  });
+  return `Existing backlog (do not duplicate any of these):\n\n${lines.join('\n')}\n\nSuggest one new feature or task that fits this project.`;
 }
 
 function parseJsonOrThrow(stdout: string, stderr: string): unknown {

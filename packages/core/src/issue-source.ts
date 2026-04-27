@@ -1,4 +1,11 @@
-import type { Comment, CreateIssueInput, Issue, UpdateIssuePatch } from './types.js';
+import type {
+  Comment,
+  CreateIssueInput,
+  Issue,
+  OpenPRInput,
+  PullRequest,
+  UpdateIssuePatch,
+} from './types.js';
 
 /**
  * The contract every issue backend implements.
@@ -14,4 +21,6 @@ export interface IssueSource {
   updateIssue(number: number, patch: UpdateIssuePatch): Promise<Issue>;
   listComments(number: number): Promise<Comment[]>;
   addComment(number: number, body: string): Promise<Comment>;
+  // Optional — only github-backed sources can open PRs.
+  openDraftPR?(input: OpenPRInput): Promise<PullRequest>;
 }

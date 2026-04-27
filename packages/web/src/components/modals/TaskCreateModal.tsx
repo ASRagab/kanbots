@@ -624,30 +624,6 @@ export function TaskCreateModal({
                 </span>
               </div>
             </div>
-
-            <div className="kb-mas-block">
-              <div className="kb-mas-h">What runs</div>
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 7,
-                  fontSize: 12,
-                }}
-              >
-                <Step n="1" label="git worktree add" sub={`→ ${branchName}`} />
-                {mode === 'spec' ? (
-                  <Step n="2" label="claude /spec" sub="refine into acceptance criteria" />
-                ) : mode === 'dispatch' ? (
-                  <Step n="2" label="claude code" sub={`spawn ${model} on the worktree`} />
-                ) : (
-                  <Step n="2" label="(idle)" sub="wait for you to press Start" muted />
-                )}
-                {mode !== 'queue' && checks.preview ? (
-                  <Step n="3" label="pnpm dev" sub="branch preview comes online (Phase 11)" />
-                ) : null}
-              </div>
-            </div>
           </aside>
         </div>
 
@@ -748,33 +724,3 @@ function SplitButton({
   );
 }
 
-function Step({ n, label, sub, muted }: { n: string; label: string; sub: string; muted?: boolean }) {
-  return (
-    <div style={{ display: 'flex', gap: 9, opacity: muted ? 0.55 : 1 }}>
-      <div
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: '50%',
-          background: 'var(--bg-2)',
-          border: '1px solid var(--hairline)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 10,
-          color: 'var(--ink-2)',
-          fontFamily: 'var(--ff-mono)',
-          flexShrink: 0,
-        }}
-      >
-        {n}
-      </div>
-      <div>
-        <div style={{ fontFamily: 'var(--ff-mono)', fontSize: 11.5, color: 'var(--ink-1)' }}>
-          {label}
-        </div>
-        <div style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 1 }}>{sub}</div>
-      </div>
-    </div>
-  );
-}

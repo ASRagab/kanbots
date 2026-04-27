@@ -35,6 +35,7 @@ export interface CreateSupervisorOptions {
   createWorktree?: (input: CreateWorktreeInput) => Promise<Worktree>;
   prepareWorktreeDir?: (path: string) => Promise<void>;
   appendSystemPromptDefault?: string;
+  onRunComplete?: (run: AgentRun) => Promise<void> | void;
 }
 
 export interface StartRunInput {
@@ -48,6 +49,7 @@ export interface StartRunInput {
 export interface ResumeRunInput {
   runId: number;
   prompt: string;
+  appendSystemPrompt?: string;
 }
 
 export type AgentEventListener = (event: AgentEvent) => void;
@@ -88,8 +90,10 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
   // Any 'starting'/'running' rows on construction belong to a previous app
   // process — the supervisor's in-memory handles don't survive restart, so
   // those runs are by definition dead. Mark them failed so the UI stops
-  // reporting them as live.
+  // reporting them as live, then sweep any pending decisions whose run is
+  // no longer in an active state.
   store.agentRuns.markStartingRunningAsInterrupted('interrupted: app restart');
+  store.cards.dismissOrphanPendingDecisions();
 
   const active = new Map<number, ActiveRun>();
   const emitter = new EventEmitter();
@@ -187,8 +191,16 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
           : {}),
         ...(exitReason !== null ? { exitReason } : {}),
       });
+      if (status !== 'awaiting_input') {
+        store.cards.dismissPendingDecisionsForRun(run.id);
+      }
       active.delete(run.id);
       emitter.emit(statusChannel(run.id), updated.status);
+      if (status === 'complete' && opts.onRunComplete) {
+        void Promise.resolve(opts.onRunComplete(updated)).catch(() => {
+          // best-effort hook; failures must not crash the supervisor
+        });
+      }
     });
 
     handle.on('error', (err) => {
@@ -264,7 +276,7 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
       cwd: existing.worktreePath,
       prompt: input.prompt,
       resumeFromSessionId: existing.sessionId,
-      appendSystemPrompt: composeSystemPrompt(undefined),
+      appendSystemPrompt: composeSystemPrompt(input.appendSystemPrompt),
     });
 
     const run = store.agentRuns.update(input.runId, {
@@ -296,6 +308,7 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
       endedAt: new Date().toISOString(),
       pid: null,
     });
+    store.cards.dismissPendingDecisionsForRun(runId);
     emitter.emit(statusChannel(runId), updated.status);
     return updated;
   }
