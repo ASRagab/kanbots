@@ -18,9 +18,18 @@ This is a development build. Launch via the desktop scripts; there is no CLI.
 | `@kanbots/core` | Domain types, GitHub client, `IssueSource` contract |
 | `@kanbots/local-store` | SQLite + migrations, repos, workspace metadata, `LocalIssueSource` |
 | `@kanbots/dispatcher` | Agent runtime — spawns and supervises `claude -p`, parses stream-json |
-| `@kanbots/api` | HTTP API server (Express) + agent supervisor |
-| `@kanbots/web` | React + Vite UI (board + issue detail) |
-| `@kanbots/desktop` | Electron shell — workspace picker, in-process API, native folder dialog |
+| `@kanbots/api` | Pure handler library + agent supervisor (no HTTP server) |
+| `@kanbots/web` | React + Vite UI (renders inside Electron only) |
+| `@kanbots/desktop` | Electron shell — workspace picker, IPC bridge, native folder dialog |
+
+## Architecture
+
+The renderer talks to the main process exclusively via Electron IPC
+(`window.kanbots.invoke` for commands, `window.kanbots.subscribe` for streams).
+There is no HTTP server. The web UI cannot run in a plain browser —
+`pnpm desktop:dev` keeps Vite for HMR but Electron is the only client. The
+contract for every channel lives in `packages/api/src/bridge.ts` and is
+imported type-only by both the renderer and the IPC bridge.
 
 ## Run it
 

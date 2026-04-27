@@ -73,11 +73,6 @@ export function TweaksPanel({
           onChange={(v) => onSet('showRail', v)}
         />
         <Toggle
-          label="Inspector dock"
-          on={tweaks.showInspector}
-          onChange={(v) => onSet('showInspector', v)}
-        />
-        <Toggle
           label="Decision tray"
           on={tweaks.showTray}
           onChange={(v) => onSet('showTray', v)}

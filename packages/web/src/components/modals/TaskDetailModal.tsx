@@ -14,11 +14,15 @@ import {
 import { PreviewPanel } from '../run/PreviewPanel.js';
 import { RunSummary } from '../run/RunSummary.js';
 import type {
+  AgentEvent,
   AgentRun,
   AgentRunStatus,
+  Card,
+  DecisionPayload,
   DiffFile,
   DiffPayload,
   IssueDetail as IssueDetailPayload,
+  Message,
 } from '../../types.js';
 
 const TAB_LABELS: Record<DetailTab, string> = {
@@ -62,7 +66,7 @@ export interface TaskDetailModalProps {
 
 export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) {
   const [tab, setTab] = useState<DetailTab>('overview');
-  const { data, loading, error, mutate } = useFetch<IssueDetailPayload>(
+  const { data, loading, error, refetch } = useFetch<IssueDetailPayload>(
     `issue:${issueNumber}`,
     () => api.issue(issueNumber),
   );
@@ -81,6 +85,9 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
 
   const issue = data?.issue ?? null;
   const activeRun = data?.thread?.activeRun ?? null;
+  const latestRun = data?.thread?.latestRun ?? null;
+  const displayRun = activeRun ?? latestRun;
+  const messages = data?.thread?.messages ?? [];
   const isRunning =
     activeRun?.status === 'running' ||
     activeRun?.status === 'awaiting_input' ||
@@ -101,7 +108,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
             <button
               type="button"
               className="kb-btn ghost"
-              onClick={() => void api.stopAgent(activeRun.id).then(() => mutate((p) => (p ? { ...p } : p)))}
+              onClick={() => void api.stopAgent(activeRun.id).then(() => refetch())}
             >
               Stop
             </button>
@@ -109,7 +116,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
           <button type="button" className="kb-btn ghost" disabled title="Phase 11">
             Fork run
           </button>
-          {activeRun ? (
+          {displayRun ? (
             <button type="button" className="kb-btn primary" onClick={() => setTab('preview')}>
               Open preview ↗
             </button>
@@ -193,10 +200,10 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                         priority:{priorityFromLabels(issue.labels)}
                       </span>
                     ) : null}
-                    {activeRun?.branchName ? (
+                    {displayRun?.branchName ? (
                       <span className="kb-chip mono">
                         <span className="k">branch</span>
-                        {activeRun.branchName}
+                        {displayRun.branchName}
                       </span>
                     ) : null}
                     <span className="kb-chip mono">
@@ -221,11 +228,17 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
 
                 <div className="kb-tdm-content">
                   {tab === 'overview' ? (
-                    <OverviewTab issue={issue} activeRun={activeRun} />
+                    <OverviewTab issue={issue} displayRun={displayRun} />
                   ) : null}
-                  {tab === 'thread' ? <ThreadTab activeRun={activeRun} /> : null}
-                  {tab === 'diff' ? <DiffTabModal activeRun={activeRun} /> : null}
-                  {tab === 'preview' ? <PreviewTabModal activeRun={activeRun} /> : null}
+                  {tab === 'thread' ? (
+                    <ThreadTab
+                      activeRun={activeRun}
+                      displayRun={displayRun}
+                      messages={messages}
+                    />
+                  ) : null}
+                  {tab === 'diff' ? <DiffTabModal activeRun={displayRun} /> : null}
+                  {tab === 'preview' ? <PreviewTabModal activeRun={displayRun} /> : null}
                   {tab === 'runs' ? <RunsTab issueNumber={issue.number} /> : null}
                 </div>
               </>
@@ -243,6 +256,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
               <Aside
                 issue={issue}
                 activeRun={activeRun}
+                latestRun={latestRun}
               />
             ) : null}
           </aside>
@@ -250,7 +264,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
 
         <div className="kb-modal-foot">
           <span className="hint">Reply to agent</span>
-          <ReplyFooter issueNumber={issueNumber} onSent={() => mutate((p) => (p ? { ...p } : p))} />
+          <ReplyFooter issueNumber={issueNumber} onSent={() => void refetch()} />
         </div>
       </div>
     </div>
@@ -266,15 +280,19 @@ function ReplyFooter({
 }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function send(): Promise<void> {
     const trimmed = body.trim();
     if (!trimmed || sending) return;
     setSending(true);
+    setError(null);
     try {
       await api.postMessage(issueNumber, trimmed);
       setBody('');
       onSent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
     }
@@ -305,17 +323,36 @@ function ReplyFooter({
       >
         {sending ? 'Sending…' : 'Send'} <span className="kb-kbd">⌘↵</span>
       </button>
+      {error ? (
+        <span style={{ color: 'var(--failed)', fontSize: 11, marginLeft: 8 }}>{error}</span>
+      ) : null}
     </>
   );
 }
 
-function Aside({ issue, activeRun }: { issue: IssueDetailPayload['issue']; activeRun: AgentRun | null }) {
+function Aside({
+  issue,
+  activeRun,
+  latestRun,
+}: {
+  issue: IssueDetailPayload['issue'];
+  activeRun: AgentRun | null;
+  latestRun: AgentRun | null;
+}) {
   const links = linkedIssueNumbers(issue.labels);
+  const sidebarRun = activeRun ?? latestRun;
+  const sidebarHeader = activeRun ? 'Live run' : latestRun ? 'Last run' : 'Run';
   return (
     <>
       <div className="kb-mas-block">
-        <div className="kb-mas-h">Live run</div>
-        <RunSummary run={activeRun} layout="aside" />
+        <div className="kb-mas-h">{sidebarHeader}</div>
+        {sidebarRun ? (
+          <RunSummary run={sidebarRun} layout="aside" />
+        ) : (
+          <div className="kb-desc-md" style={{ color: 'var(--ink-3)', fontSize: 12 }}>
+            No agent runs yet.
+          </div>
+        )}
       </div>
 
       <div className="kb-mas-block">
@@ -339,12 +376,12 @@ function Aside({ issue, activeRun }: { issue: IssueDetailPayload['issue']; activ
         <div className="kb-mas-row">
           <span className="k">Worktree</span>
           <span className="v mono">
-            {activeRun?.worktreePath ?? '—'}
+            {sidebarRun?.worktreePath ?? '—'}
           </span>
         </div>
         <div className="kb-mas-row">
           <span className="k">Branch</span>
-          <span className="v mono">{activeRun?.branchName ?? '—'}</span>
+          <span className="v mono">{sidebarRun?.branchName ?? '—'}</span>
         </div>
         <div className="kb-mas-row">
           <span className="k">Base</span>
@@ -444,12 +481,12 @@ function LinkedIssues({
 
 function OverviewTab({
   issue,
-  activeRun,
+  displayRun,
 }: {
   issue: IssueDetailPayload['issue'];
-  activeRun: AgentRun | null;
+  displayRun: AgentRun | null;
 }) {
-  const stream = useAgentRunStream(activeRun?.id ?? null);
+  const stream = useAgentRunStream(displayRun?.id ?? null);
   const recentToolCalls = stream.events.filter((e) => e.type === 'tool_use').slice(-4).reverse();
   const acMatches = (issue.body ?? '').match(/(?:^|\n)\s*AC:\s*\n((?:[-*]\s.+\n?)+)/);
   const acItems = acMatches?.[1]?.match(/(?:^|\n)[-*]\s(.+)/g)?.map((l) => l.replace(/^[\s-*]+/, '')) ?? [];
@@ -509,15 +546,53 @@ function OverviewTab({
   );
 }
 
-function ThreadTab({ activeRun }: { activeRun: AgentRun | null }) {
-  const stream = useAgentRunStream(activeRun?.id ?? null);
+type TimelineItem =
+  | { kind: 'event'; sortKey: string; id: string; event: AgentEvent }
+  | { kind: 'message'; sortKey: string; id: string; message: Message; cards: Card[] };
 
-  if (!activeRun && stream.events.length === 0) {
+function ThreadTab({
+  activeRun,
+  displayRun,
+  messages,
+}: {
+  activeRun: AgentRun | null;
+  displayRun: AgentRun | null;
+  messages: Message[];
+}) {
+  const stream = useAgentRunStream(displayRun?.id ?? null);
+  const isLive = activeRun !== null && activeRun.id === displayRun?.id;
+
+  const cardsByMessageId = new Map<number, Card[]>();
+  for (const c of stream.cards) {
+    const arr = cardsByMessageId.get(c.messageId) ?? [];
+    arr.push(c);
+    cardsByMessageId.set(c.messageId, arr);
+  }
+
+  const items: TimelineItem[] = [];
+  for (const m of messages) {
+    items.push({
+      kind: 'message',
+      sortKey: m.createdAt,
+      id: `m${m.id}`,
+      message: m,
+      cards: cardsByMessageId.get(m.id) ?? [],
+    });
+  }
+  for (const e of stream.events) {
+    items.push({ kind: 'event', sortKey: e.createdAt, id: `e${e.id}`, event: e });
+  }
+  items.sort((a, b) => {
+    if (a.sortKey === b.sortKey) return a.id.localeCompare(b.id);
+    return a.sortKey < b.sortKey ? -1 : 1;
+  });
+
+  if (items.length === 0) {
     return (
       <div className="kb-tdm-section">
         <h3>Agent thread</h3>
         <div className="kb-desc-md" style={{ color: 'var(--ink-3)' }}>
-          No agent has been started for this issue yet.
+          No agent activity yet. Reply below to start the conversation.
         </div>
       </div>
     );
@@ -525,49 +600,170 @@ function ThreadTab({ activeRun }: { activeRun: AgentRun | null }) {
 
   return (
     <div className="kb-tdm-section">
-      <h3>Agent thread</h3>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>Agent thread</h3>
+        {displayRun ? (
+          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            run #{displayRun.id} · {STATUS_LABEL[displayRun.status]}
+            {isLive ? '' : ` · ended ${ageString(displayRun.endedAt ?? displayRun.startedAt)} ago`}
+          </span>
+        ) : null}
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {stream.events.map((ev) => {
-          if (ev.type === 'text') {
-            const text = (ev.payload as { text?: string }).text ?? '';
-            return (
-              <div
-                key={ev.id}
-                style={{
-                  background: 'color-mix(in oklch, var(--bg-1) 80%, var(--accent-soft))',
-                  border: '1px solid var(--accent-line)',
-                  borderRadius: 8,
-                  padding: '10px 12px',
-                }}
-              >
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 5 }}>
-                  <b style={{ color: 'var(--accent)' }}>claude</b> · {ageString(ev.createdAt)} ago
-                </div>
-                <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-1)', whiteSpace: 'pre-wrap' }}>
-                  {text}
-                </div>
-              </div>
-            );
-          }
-          if (ev.type === 'tool_use') {
-            const p = ev.payload as { name?: string; input?: unknown };
-            return (
-              <div key={ev.id} className="kb-tcall">
-                <div className="kb-tcall-head">
-                  <span className="name">{p.name ?? 'tool'}</span>
-                  <span className="arg">
-                    {typeof p.input === 'string' ? p.input : JSON.stringify(p.input)}
-                  </span>
-                  <span className="dur" style={{ color: 'var(--running)' }}>● live</span>
-                </div>
-              </div>
-            );
-          }
-          return null;
-        })}
+        {items.map((it) =>
+          it.kind === 'message' ? (
+            <MessageRow key={it.id} message={it.message} cards={it.cards} />
+          ) : (
+            <EventRow key={it.id} event={it.event} isLive={isLive} />
+          ),
+        )}
       </div>
     </div>
   );
+}
+
+function MessageRow({ message, cards }: { message: Message; cards: Card[] }) {
+  if (message.role === 'system') {
+    return (
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--ink-3)',
+          textAlign: 'center',
+          padding: '4px 0',
+        }}
+      >
+        — {message.body} · {ageString(message.createdAt)} ago —
+        {cards.map((c) =>
+          c.type === 'decision' ? (
+            <DecisionInline key={c.id} card={c as Card<DecisionPayload>} />
+          ) : null,
+        )}
+      </div>
+    );
+  }
+  const isUser = message.role === 'user';
+  const label = isUser ? 'you' : 'claude';
+  const labelColor = isUser ? 'var(--ink-1)' : 'var(--accent)';
+  const bg = isUser
+    ? 'var(--bg-2)'
+    : 'color-mix(in oklch, var(--bg-1) 80%, var(--accent-soft))';
+  const border = isUser ? 'var(--hairline)' : 'var(--accent-line)';
+  return (
+    <div
+      style={{
+        background: bg,
+        border: `1px solid ${border}`,
+        borderRadius: 8,
+        padding: '10px 12px',
+      }}
+    >
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 5 }}>
+        <b style={{ color: labelColor }}>{label}</b> · {ageString(message.createdAt)} ago
+      </div>
+      <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-1)', whiteSpace: 'pre-wrap' }}>
+        {message.body}
+      </div>
+      {cards.map((c) =>
+        c.type === 'decision' ? (
+          <DecisionInline key={c.id} card={c as Card<DecisionPayload>} />
+        ) : null,
+      )}
+    </div>
+  );
+}
+
+function DecisionInline({ card }: { card: Card<DecisionPayload> }) {
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isResolved = card.status === 'resolved';
+
+  async function pick(value: string): Promise<void> {
+    if (isResolved || submitting !== null) return;
+    setSubmitting(value);
+    setError(null);
+    try {
+      await api.resolveCard(card.id, value);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSubmitting(null);
+    }
+  }
+
+  return (
+    <div className="kb-decision" role="region" aria-label="Agent question" style={{ marginTop: 10 }}>
+      <div className="kb-decision-opts">
+        {card.payload.options.map((opt, i) => (
+          <button
+            key={opt.value}
+            type="button"
+            className={`kb-decision-opt${submitting === opt.value ? ' chosen' : ''}`}
+            disabled={isResolved || submitting !== null}
+            onClick={() => void pick(opt.value)}
+          >
+            <span className="num">{i + 1}</span>
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {isResolved ? (
+        <div className="kb-decision-resolved-note">resolved</div>
+      ) : null}
+      {error ? <div className="kb-decision-resolved-note">error: {error}</div> : null}
+    </div>
+  );
+}
+
+function EventRow({ event, isLive }: { event: AgentEvent; isLive: boolean }) {
+  if (event.type === 'text') {
+    const text = (event.payload as { text?: string }).text ?? '';
+    return (
+      <div
+        style={{
+          background: 'color-mix(in oklch, var(--bg-1) 80%, var(--accent-soft))',
+          border: '1px solid var(--accent-line)',
+          borderRadius: 8,
+          padding: '10px 12px',
+        }}
+      >
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 5 }}>
+          <b style={{ color: 'var(--accent)' }}>claude</b> · {ageString(event.createdAt)} ago
+        </div>
+        <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-1)', whiteSpace: 'pre-wrap' }}>
+          {text}
+        </div>
+      </div>
+    );
+  }
+  if (event.type === 'tool_use') {
+    const p = event.payload as { name?: string; input?: unknown };
+    return (
+      <div className="kb-tcall">
+        <div className="kb-tcall-head">
+          <span className="name">{p.name ?? 'tool'}</span>
+          <span className="arg">
+            {typeof p.input === 'string' ? p.input : JSON.stringify(p.input)}
+          </span>
+          <span className="dur" style={{ color: isLive ? 'var(--running)' : 'var(--ink-3)' }}>
+            {isLive ? '● live' : ageString(event.createdAt) + ' ago'}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (event.type === 'error') {
+    const p = event.payload as { message?: string };
+    return (
+      <div className="kb-tcall" style={{ borderColor: 'var(--failed)' }}>
+        <div className="kb-tcall-head">
+          <span className="name" style={{ color: 'var(--failed)' }}>error</span>
+          <span className="arg">{p.message ?? 'unknown'}</span>
+          <span className="dur">{ageString(event.createdAt)} ago</span>
+        </div>
+      </div>
+    );
+  }
+  return null;
 }
 
 function DiffTabModal({ activeRun }: { activeRun: AgentRun | null }) {

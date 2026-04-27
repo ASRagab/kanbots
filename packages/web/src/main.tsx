@@ -1,7 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
-import { configureApi } from './api.js';
 import { getBridge } from './desktop-bridge.js';
 import type { ActiveWorkspaceInfo, RecentWorkspace } from './desktop-bridge.js';
 import './styles/tokens.css';
@@ -22,18 +21,18 @@ async function bootstrap(): Promise<{
   workspace: ActiveWorkspaceInfo | null;
   recents: RecentWorkspace[];
   hasBridge: boolean;
+  claudeAuthed: boolean;
 }> {
   const bridge = getBridge();
   if (!bridge) {
-    configureApi('');
-    return { workspace: null, recents: [], hasBridge: false };
+    return { workspace: null, recents: [], hasBridge: false, claudeAuthed: true };
   }
   const payload = await bridge.bootstrap();
-  configureApi(payload.apiBaseUrl);
   return {
     workspace: payload.workspace,
     recents: payload.recents,
     hasBridge: true,
+    claudeAuthed: payload.claudeAuthed,
   };
 }
 
@@ -43,10 +42,15 @@ if (!container) {
 }
 const root = createRoot(container);
 
-void bootstrap().then(({ workspace, recents, hasBridge }) => {
+void bootstrap().then(({ workspace, recents, hasBridge, claudeAuthed }) => {
   root.render(
     <StrictMode>
-      <App workspace={workspace} initialRecents={recents} hasBridge={hasBridge} />
+      <App
+        workspace={workspace}
+        initialRecents={recents}
+        hasBridge={hasBridge}
+        initialClaudeAuthed={claudeAuthed}
+      />
     </StrictMode>,
   );
 });

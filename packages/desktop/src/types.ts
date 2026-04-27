@@ -1,4 +1,5 @@
 import type { WorkspaceConfig } from '@kanbots/local-store';
+import type { ChannelArgs, ChannelName, ChannelResult } from '@kanbots/api';
 
 export interface ActiveWorkspaceInfo {
   repoPath: string;
@@ -12,9 +13,9 @@ export interface RecentWorkspace {
 }
 
 export interface BootstrapPayload {
-  apiBaseUrl: string;
   workspace: ActiveWorkspaceInfo | null;
   recents: RecentWorkspace[];
+  claudeAuthed: boolean;
 }
 
 export interface KanbotsBridge {
@@ -23,6 +24,14 @@ export interface KanbotsBridge {
   openWorkspace(repoPath: string): Promise<{ ok: true } | { ok: false; error: string }>;
   closeWorkspace(): Promise<void>;
   recentWorkspaces(): Promise<RecentWorkspace[]>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  claudeAuthStatus(): Promise<{ authed: boolean }>;
+  claudeLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  claudeLoginCancel(): Promise<void>;
+  invoke<C extends ChannelName>(channel: C, args: ChannelArgs<C>): Promise<ChannelResult<C>>;
+  subscribe(eventName: string, listener: (payload: unknown) => void): () => void;
 }
 
 declare global {

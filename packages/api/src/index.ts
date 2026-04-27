@@ -1,14 +1,5 @@
-import type { AddressInfo } from 'node:net';
-import { createApp, type AppDeps } from './app.js';
-
 export const PACKAGE_NAME = '@kanbots/api';
 
-export { createApp };
-export type { AppDeps } from './app.js';
-export type { DecoratedIssue, IssuesDeps } from './routes/issues.js';
-export type { ConfigPayload } from './routes/config.js';
-export type { DraftIssueFn, DraftIssueInput, DraftedIssue } from './routes/composer.js';
-export type { UploadAttachmentResponse } from './routes/attachments.js';
 export {
   createSupervisor,
   type AgentSupervisor,
@@ -16,37 +7,68 @@ export {
   type ResumeRunInput,
   type StartRunInput,
 } from './agent-runs/supervisor.js';
+export {
+  reconcileIssueLabels,
+  type ReconcileLabelsResult,
+} from './workspace-reconcile.js';
+export {
+  bootstrapWorkspace,
+  type WorkspaceBootstrapResult,
+} from './workspace-bootstrap.js';
 
-export interface StartOptions extends AppDeps {
-  port?: number;
-  host?: string;
-}
-
-export interface RunningServer {
-  port: number;
-  host: string;
-  close: () => Promise<void>;
-}
-
-export async function startServer(opts: StartOptions): Promise<RunningServer> {
-  const app = createApp(opts);
-  const port = opts.port ?? 3737;
-  const host = opts.host ?? '127.0.0.1';
-
-  return await new Promise<RunningServer>((resolve, reject) => {
-    const server = app.listen(port, host, () => {
-      const addr = server.address() as AddressInfo | string | null;
-      const actualPort =
-        typeof addr === 'object' && addr !== null && 'port' in addr ? addr.port : port;
-      resolve({
-        port: actualPort,
-        host,
-        close: () =>
-          new Promise<void>((res, rej) => {
-            server.close((err) => (err ? rej(err) : res()));
-          }),
-      });
-    });
-    server.on('error', reject);
-  });
-}
+export {
+  createHandlers,
+  type CreateHandlersOptions,
+  type HandlerDeps,
+  type Handlers,
+  type SubscriptionRegistry,
+} from './handlers/index.js';
+export type {
+  AgentCheck,
+  AgentEvent,
+  AgentEventType,
+  AgentKey,
+  AgentRun,
+  AgentRunEventPayload,
+  AgentRunStatus,
+  BridgeChannels,
+  Card,
+  CardStatus,
+  CardType,
+  ChannelArgs,
+  ChannelName,
+  ChannelResult,
+  CheckKind,
+  Comment,
+  Config,
+  CreateIssueInput,
+  DecisionPayload,
+  DecoratedIssue,
+  DiffFile,
+  DiffFileStatus,
+  DiffPayload,
+  DispatchResult,
+  DraftedIssue,
+  DraftIssueFn,
+  DraftIssueInput,
+  EventSubscribeResult,
+  ForkRunResult,
+  Issue,
+  IssueActiveRunPayload,
+  IssueDetail,
+  Message,
+  PendingDecisionPayload,
+  PostMessageResult,
+  PreviewState,
+  PreviewStatePayload,
+  ResolveCardResult,
+  Role,
+  RunStatsResult,
+  SplitResult,
+  StatusKey,
+  ThreadPayload,
+  UpdateIssuePatch,
+  UploadAttachmentResult,
+  Workspace,
+  WorkspaceFolderPayload,
+} from './bridge.js';

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { apiUrl } from '../api.js';
+import { useEffect, useState } from 'react';
+import type { AgentRunEventPayload } from '../global.js';
 import type { AgentEvent, AgentRunStatus, Card } from '../types.js';
 
 export interface AgentRunStreamState {
@@ -9,75 +9,88 @@ export interface AgentRunStreamState {
   error: string | null;
 }
 
+const EMPTY_STATE: AgentRunStreamState = {
+  events: [],
+  cards: [],
+  status: null,
+  error: null,
+};
+
 export function useAgentRunStream(runId: number | null): AgentRunStreamState {
-  const [state, setState] = useState<AgentRunStreamState>({
-    events: [],
-    cards: [],
-    status: null,
-    error: null,
-  });
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const [state, setState] = useState<AgentRunStreamState>(EMPTY_STATE);
 
   useEffect(() => {
     if (runId === null) {
-      setState({ events: [], cards: [], status: null, error: null });
+      setState(EMPTY_STATE);
       return;
     }
 
-    setState({ events: [], cards: [], status: null, error: null });
-    const url = apiUrl(`/api/agent-runs/${runId}/events`);
-    const source = new EventSource(url);
+    setState(EMPTY_STATE);
 
-    source.addEventListener('agent', (e) => {
-      try {
-        const ev = JSON.parse((e as MessageEvent).data) as AgentEvent;
-        setState((prev) => {
-          if (prev.events.some((existing) => existing.seq === ev.seq)) return prev;
-          const next = [...prev.events, ev].sort((a, b) => a.seq - b.seq);
-          return { ...prev, events: next };
+    const bridge = typeof window !== 'undefined' ? window.kanbots : undefined;
+    if (!bridge) {
+      setState({
+        ...EMPTY_STATE,
+        error: 'window.kanbots not available — renderer must run inside Electron',
+      });
+      return;
+    }
+
+    let cancelled = false;
+    let subscriptionId: string | null = null;
+    let unsubscribeBridge: (() => void) | null = null;
+
+    bridge
+      .invoke('agent-runs:events:subscribe', { runId })
+      .then(({ subscriptionId: subId, runStatus }) => {
+        if (cancelled) {
+          void bridge.invoke('agent-runs:events:unsubscribe', { subscriptionId: subId });
+          return;
+        }
+        subscriptionId = subId;
+        setState((prev) => ({ ...prev, status: runStatus }));
+        unsubscribeBridge = bridge.subscribe('agent-runs:events:data', (raw) => {
+          const payload = raw as AgentRunEventPayload;
+          if (payload.subscriptionId !== subId) return;
+          if (payload.kind === 'event') {
+            const ev = payload.event;
+            setState((prev) => {
+              if (prev.events.some((existing) => existing.seq === ev.seq)) return prev;
+              const next = [...prev.events, ev].sort((a, b) => a.seq - b.seq);
+              return { ...prev, events: next };
+            });
+          } else if (payload.kind === 'card') {
+            const card = payload.card;
+            setState((prev) => {
+              const exists = prev.cards.some((c) => c.id === card.id);
+              return exists
+                ? {
+                    ...prev,
+                    cards: prev.cards.map((c) => (c.id === card.id ? card : c)),
+                  }
+                : { ...prev, cards: [...prev.cards, card] };
+            });
+          } else if (payload.kind === 'status') {
+            const status = payload.status;
+            setState((prev) => ({ ...prev, status }));
+          }
+          // 'end' → main process auto-cleans the subscription; nothing to do.
         });
-      } catch (err) {
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
         setState((prev) => ({
           ...prev,
           error: err instanceof Error ? err.message : String(err),
         }));
-      }
-    });
-
-    source.addEventListener('card', (e) => {
-      try {
-        const card = JSON.parse((e as MessageEvent).data) as Card;
-        setState((prev) => {
-          const exists = prev.cards.some((c) => c.id === card.id);
-          if (exists) {
-            return {
-              ...prev,
-              cards: prev.cards.map((c) => (c.id === card.id ? card : c)),
-            };
-          }
-          return { ...prev, cards: [...prev.cards, card] };
-        });
-      } catch {
-        // ignore
-      }
-    });
-
-    source.addEventListener('status', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data) as { status: AgentRunStatus };
-        setState((prev) => ({ ...prev, status: data.status }));
-      } catch {
-        // ignore
-      }
-    });
-
-    source.onerror = () => {
-      setState((prev) => (prev.events.length === 0 ? { ...prev, error: 'connection lost' } : prev));
-    };
+      });
 
     return () => {
-      source.close();
+      cancelled = true;
+      if (unsubscribeBridge) unsubscribeBridge();
+      if (subscriptionId !== null) {
+        void bridge.invoke('agent-runs:events:unsubscribe', { subscriptionId });
+      }
     };
   }, [runId]);
 

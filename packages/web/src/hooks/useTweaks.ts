@@ -4,7 +4,6 @@ export interface Tweaks {
   theme: 'dark' | 'paper';
   accentHue: number;
   showRail: boolean;
-  showInspector: boolean;
   showTray: boolean;
 }
 
@@ -12,7 +11,6 @@ export const TWEAK_DEFAULTS: Tweaks = {
   theme: 'dark',
   accentHue: 45,
   showRail: true,
-  showInspector: true,
   showTray: true,
 };
 

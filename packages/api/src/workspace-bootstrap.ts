@@ -1,5 +1,5 @@
 import type { Folder, Store, Workspace } from '@kanbots/local-store';
-import type { ConfigPayload } from './routes/config.js';
+import type { Config } from './bridge.js';
 
 export interface WorkspaceBootstrapResult {
   workspace: Workspace;
@@ -9,7 +9,7 @@ export interface WorkspaceBootstrapResult {
 const DEFAULT_WORKSPACE_ID = 'default';
 const DEFAULT_WORKSPACE_NAME = 'kanbots workspace';
 
-function folderIdFor(config: ConfigPayload, repoPath: string): string {
+function folderIdFor(config: Config, repoPath: string): string {
   const slug =
     (config.mode === 'local' ? config.repo : `${config.owner}-${config.repo}`)
       .toLowerCase()
@@ -28,7 +28,7 @@ function folderIdFor(config: ConfigPayload, repoPath: string): string {
 
 export function bootstrapWorkspace(
   store: Store,
-  config: ConfigPayload,
+  config: Config,
   repoPath: string,
 ): WorkspaceBootstrapResult {
   const workspace = store.workspaces.ensure({

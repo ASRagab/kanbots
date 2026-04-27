@@ -166,6 +166,13 @@ export class AgentRunsRepo {
     return row ? rowToAgentRun(row) : null;
   }
 
+  findLatestForThread(threadId: ThreadId): AgentRun | null {
+    const row = this.db
+      .prepare('SELECT * FROM agent_runs WHERE thread_id = ? ORDER BY id DESC LIMIT 1')
+      .get(threadId) as AgentRunRow | undefined;
+    return row ? rowToAgentRun(row) : null;
+  }
+
   listByThread(threadId: ThreadId): AgentRun[] {
     const rows = this.db
       .prepare('SELECT * FROM agent_runs WHERE thread_id = ? ORDER BY id')
@@ -178,6 +185,25 @@ export class AgentRunsRepo {
       .prepare(`SELECT * FROM agent_runs WHERE status IN ${ACTIVE_STATUSES} AND pid IS NOT NULL`)
       .all() as AgentRunRow[];
     return rows.map(rowToAgentRun);
+  }
+
+  // 'awaiting_input' is intentionally excluded — those runs have already exited
+  // cleanly and are waiting for the user. They should resume on the next message.
+  markStartingRunningAsInterrupted(reason: string): AgentRun[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM agent_runs WHERE status IN ('starting', 'running')`)
+      .all() as AgentRunRow[];
+    if (rows.length === 0) return [];
+    const endedAt = new Date().toISOString();
+    const update = this.db.prepare(
+      `UPDATE agent_runs SET status = 'failed', ended_at = ?, pid = NULL, exit_reason = ?
+       WHERE id = ?`,
+    );
+    const txn = this.db.transaction((ids: number[]) => {
+      for (const id of ids) update.run(endedAt, reason, id);
+    });
+    txn(rows.map((r) => r.id));
+    return rows.map((r) => ({ ...rowToAgentRun(r), status: 'failed', endedAt, pid: null, exitReason: reason }));
   }
 
   sumCostSince(isoDate: string): number {

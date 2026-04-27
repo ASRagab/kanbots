@@ -8,9 +8,10 @@
     "build:main": "tsup",
     "build:web": "pnpm --filter @kanbots/web build",
     "copy:web": "node scripts/copy-web.cjs",
+    "ensure:native": "node scripts/ensure-native.cjs",
     "build": "pnpm build:web && pnpm build:main && pnpm copy:web",
-    "dev": "concurrently -k -n web,electron -c blue,magenta \"pnpm --filter @kanbots/web dev\" \"wait-on http://127.0.0.1:5173 && tsup && KANBOTS_RENDERER_URL=http://127.0.0.1:5173 electron ./dist/main.cjs\"",
-    "launch": "pnpm build && electron ./dist/main.cjs",
+    "dev": "pnpm ensure:native && concurrently -k -n web,main,electron -c blue,yellow,magenta \"pnpm --filter @kanbots/web dev\" \"tsup --watch\" \"wait-on http://127.0.0.1:5173 ./dist/main.cjs && KANBOTS_RENDERER_URL=http://127.0.0.1:5173 electronmon ./dist/main.cjs\"",
+    "launch": "pnpm ensure:native && pnpm build && electron ./dist/main.cjs",
     "package": "pnpm build && electron-builder --linux AppImage",
     "package:dir": "pnpm build && electron-builder --dir",
     "typecheck": "tsc --noEmit"
@@ -20,7 +21,6 @@
     "@octokit/plugin-paginate-rest": "^11.6.0",
     "@octokit/request-error": "^6.1.8",
     "better-sqlite3": "^12.4.1",
-    "express": "^5.1.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -34,9 +34,16 @@
     "concurrently": "^9.1.2",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "electronmon": "^2.0.4",
     "tsup": "^8.3.5",
     "typescript": "^5.7.3",
     "wait-on": "^8.0.1"
+  },
+  "electronmon": {
+    "patterns": [
+      "dist/**/*.cjs"
+    ],
+    "logLevel": "quiet"
   },
   "build": {
     "appId": "io.kanbots.desktop",
@@ -52,9 +59,15 @@
       "output": "release",
       "buildResources": "build"
     },
-    "files": ["dist/**/*", "package.json"],
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
     "linux": {
-      "target": ["AppImage", "tar.xz"],
+      "target": [
+        "AppImage",
+        "tar.xz"
+      ],
       "category": "Development",
       "artifactName": "kanbots-${version}.${ext}"
     },

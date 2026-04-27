@@ -67,7 +67,18 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
   -webkit-app-region: no-drag;
+}
+.kb-tlight:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.kb-tlight:focus-visible {
+  outline: 2px solid var(--accent, #4c8bf5);
+  outline-offset: 2px;
 }
 .kb-tlight.r {
   background: #ff5f57;

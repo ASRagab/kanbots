@@ -15,7 +15,7 @@ import { Column } from '../components/Column.js';
 import { useBoardAgentStreams } from '../hooks/useBoardAgentStreams.js';
 import { useBoardFilters } from '../hooks/useBoardFilters.js';
 import { useFetch } from '../hooks/useFetch.js';
-import { useIssues } from '../hooks/useIssues.js';
+import { useIssues, dispatchIssuesRefetch } from '../hooks/useIssues.js';
 import { useSelection } from '../hooks/useSelection.js';
 import { COLUMNS, withStatus } from '../labels.js';
 import type { Issue, StatusKey } from '../types.js';
@@ -162,6 +162,7 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
     if (!current) return;
     if (current.status === targetStatus) return;
 
+    const fromStatus = current.status;
     const nextLabels = withStatus(current.labels, targetStatus);
     const before = list;
 
@@ -179,6 +180,17 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
       mutate(before);
       const message = err instanceof Error ? err.message : String(err);
       setMoveError(`Couldn't move #${issueNumber}: ${message}`);
+      return;
+    }
+
+    if (targetStatus === 'inProgress' && current.activeRun == null) {
+      try {
+        await api.dispatchIssue(issueNumber, { fromStatus });
+        dispatchIssuesRefetch();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setMoveError(`Moved #${issueNumber}, but couldn't start an agent: ${message}`);
+      }
     }
   }
 

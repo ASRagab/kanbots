@@ -80,6 +80,16 @@ describe('AgentRunsRepo', () => {
     expect(store.agentRuns.listByThread(threadId)).toHaveLength(2);
   });
 
+  it('finds the latest run regardless of status', () => {
+    expect(store.agentRuns.findLatestForThread(threadId)).toBeNull();
+    const r1 = store.agentRuns.create({ threadId });
+    store.agentRuns.update(r1.id, { status: 'failed', endedAt: new Date().toISOString() });
+    expect(store.agentRuns.findLatestForThread(threadId)?.id).toBe(r1.id);
+    const r2 = store.agentRuns.create({ threadId });
+    store.agentRuns.update(r2.id, { status: 'complete', endedAt: new Date().toISOString() });
+    expect(store.agentRuns.findLatestForThread(threadId)?.id).toBe(r2.id);
+  });
+
   it('listOrphans surfaces active runs with a recorded pid', () => {
     const r = store.agentRuns.create({ threadId });
     expect(store.agentRuns.listOrphans()).toHaveLength(0);
@@ -89,5 +99,43 @@ describe('AgentRunsRepo', () => {
 
   it('throws on update of missing run', () => {
     expect(() => store.agentRuns.update(9999, { status: 'running' })).toThrow(/not found/);
+  });
+
+  describe('markStartingRunningAsInterrupted', () => {
+    it('marks starting/running rows as failed and clears pid', () => {
+      const a = store.agentRuns.create({ threadId });
+      const b = store.agentRuns.create({ threadId });
+      const c = store.agentRuns.create({ threadId });
+      store.agentRuns.update(a.id, { status: 'starting' });
+      store.agentRuns.update(b.id, { status: 'running', pid: 4242 });
+      store.agentRuns.update(c.id, { status: 'complete', endedAt: new Date().toISOString() });
+
+      const swept = store.agentRuns.markStartingRunningAsInterrupted('interrupted: test');
+      expect(swept.map((r) => r.id).sort()).toEqual([a.id, b.id].sort());
+
+      const aFresh = store.agentRuns.findById(a.id)!;
+      const bFresh = store.agentRuns.findById(b.id)!;
+      const cFresh = store.agentRuns.findById(c.id)!;
+      expect(aFresh.status).toBe('failed');
+      expect(aFresh.endedAt).toBeTruthy();
+      expect(aFresh.exitReason).toBe('interrupted: test');
+      expect(bFresh.status).toBe('failed');
+      expect(bFresh.pid).toBeNull();
+      expect(bFresh.exitReason).toBe('interrupted: test');
+      // Already-complete row untouched.
+      expect(cFresh.status).toBe('complete');
+    });
+
+    it('leaves awaiting_input rows alone', () => {
+      const r = store.agentRuns.create({ threadId });
+      store.agentRuns.update(r.id, { status: 'awaiting_input' });
+      const swept = store.agentRuns.markStartingRunningAsInterrupted('interrupted: test');
+      expect(swept).toHaveLength(0);
+      expect(store.agentRuns.findById(r.id)?.status).toBe('awaiting_input');
+    });
+
+    it('is a no-op when no rows match', () => {
+      expect(store.agentRuns.markStartingRunningAsInterrupted('x')).toEqual([]);
+    });
   });
 });

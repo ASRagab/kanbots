@@ -9,7 +9,6 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { api } from '../../api.js';
-import { useWorkspace } from '../../hooks/useWorkspace.js';
 import { CardPreview } from '../Card.js';
 import type { Issue } from '../../types.js';
 
@@ -18,6 +17,7 @@ type Tag = 'feat' | 'fix' | 'chore' | 'infra' | 'docs';
 type Priority = 'p0' | 'p1' | 'p2' | 'p3';
 type Model = 'opus' | 'sonnet';
 type Assignee = 'claude' | 'me';
+type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 type Template = 'bug' | 'feature' | 'refactor' | 'review' | 'spike';
 
 interface ModeDef {
@@ -70,7 +70,7 @@ function slugify(s: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
-      .slice(0, 36) || 'task'
+      .slice(0, 24) || 'task'
   );
 }
 
@@ -113,17 +113,9 @@ export function TaskCreateModal({
   const [tpl, setTpl] = useState<Template>('feature');
   const [assignee, setAssignee] = useState<Assignee>('claude');
   const [model, setModel] = useState<Model>('opus');
+  const [effort, setEffort] = useState<Effort>('medium');
   const [tag, setTag] = useState<Tag>('feat');
   const [priority, setPriority] = useState<Priority>('p2');
-  const [scope, setScope] = useState<string[]>([]);
-  const [scopeInput, setScopeInput] = useState('');
-  const ws = useWorkspace();
-  const [folderId, setFolderId] = useState<string>('');
-  const [base, setBase] = useState<string>('main');
-  useEffect(() => {
-    if (folderId === '' && ws.currentFolderId) setFolderId(ws.currentFolderId);
-  }, [folderId, ws.currentFolderId]);
-  const folder = ws.folders.find((f) => f.id === folderId) ?? ws.folders[0];
   const [checks, setChecks] = useState({
     tsc: true,
     tests: true,
@@ -220,12 +212,11 @@ export function TaskCreateModal({
               startedAt: new Date().toISOString(),
               currentTool: mode === 'dispatch' ? 'Read' : null,
               currentArg: mode === 'dispatch' ? 'preparing worktree…' : null,
-              additions: null,
-              deletions: null,
-              filesChanged: null,
+              totalCostUsd: null,
               pendingDecision: null,
               checks: null,
-              progress: null,
+              previewUrl: null,
+              previewState: null,
             }
           : null,
     }),
@@ -241,13 +232,6 @@ export function TaskCreateModal({
   }, [onClose]);
 
   const modeDef = MODES.find((m) => m.id === mode) ?? MODES[0]!;
-
-  function addScopePath(): void {
-    const trimmed = scopeInput.trim();
-    if (!trimmed) return;
-    setScope((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
-    setScopeInput('');
-  }
 
   async function submit(e?: FormEvent): Promise<void> {
     if (e) e.preventDefault();
@@ -283,17 +267,15 @@ export function TaskCreateModal({
 
       if (mode === 'spec' || mode === 'dispatch') {
         // Drop a kickoff message into the thread so the agent has a prompt.
-        const folderLine = folder ? `Folder: ${folder.name} (${folder.path})\n` : '';
-        const baseLine = base && base !== 'main' ? `Base branch: ${base}\n` : '';
         const kickoff =
           (body.trim() ? `${body.trim()}\n\n` : '') +
-          folderLine +
-          baseLine +
-          (scope.length > 0 ? `Scope:\n${scope.map((p) => `- ${p}`).join('\n')}\n\n` : '') +
           (mode === 'spec'
             ? 'Refine the acceptance criteria first via /spec.'
             : 'Implement this task. Run typecheck after each major edit.');
-        const messageRes = await api.postMessage(created.number, kickoff);
+        const messageRes = await api.postMessage(created.number, kickoff, { dispatch: false });
+        if (!messageRes.thread) {
+          throw new Error(`Could not initialise thread for issue #${created.number}`);
+        }
         const threadId = messageRes.thread.id;
         await api.startAgent(created.number, {
           threadId,
@@ -388,10 +370,21 @@ export function TaskCreateModal({
                       gap: 8,
                       fontSize: 11,
                       color: 'var(--ink-3)',
+                      minWidth: 0,
                     }}
                   >
-                    <span style={{ color: 'var(--ink-4)' }}>branch will be</span>
-                    <span style={{ fontFamily: 'var(--ff-mono)', color: 'var(--accent)' }}>
+                    <span style={{ color: 'var(--ink-4)', flexShrink: 0 }}>branch will be</span>
+                    <span
+                      style={{
+                        fontFamily: 'var(--ff-mono)',
+                        color: 'var(--accent)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        minWidth: 0,
+                      }}
+                      title={branchName}
+                    >
                       {branchName}
                     </span>
                   </div>
@@ -459,94 +452,49 @@ export function TaskCreateModal({
                 </div>
               </div>
 
-              {/* CONTEXT */}
-              <div className="kb-field">
-                <label className="kb-field-label">Context</label>
-                <div className="kb-sub-grid">
-                  <label className="kb-pill-select">
-                    <span className="lbl">folder</span>
-                    <select
-                      value={folderId}
-                      onChange={(e) => setFolderId(e.target.value)}
-                      className="kb-pill-select-native"
-                    >
-                      {ws.folders.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="caret">▾</span>
-                  </label>
-                  <label className="kb-pill-select">
-                    <span className="lbl">base</span>
-                    <input
-                      type="text"
-                      value={base}
-                      onChange={(e) => setBase(e.target.value)}
-                      className="kb-pill-select-input"
-                      spellCheck={false}
-                    />
-                    <span className="caret">▾</span>
-                  </label>
-                </div>
-                <div className="kb-scope-row" style={{ marginTop: 6 }}>
-                  <span style={{ fontSize: 11, color: 'var(--ink-3)', marginRight: 4 }}>scope:</span>
-                  {scope.map((p) => (
-                    <span key={p} className="kb-scope-chip">
-                      {p}
-                      <button
-                        type="button"
-                        className="x"
-                        onClick={() => setScope((prev) => prev.filter((x) => x !== p))}
-                        aria-label={`Remove ${p}`}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    type="text"
-                    className="kb-input"
-                    placeholder="apps/web/src/auth/**"
-                    value={scopeInput}
-                    onChange={(e) => setScopeInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        addScopePath();
-                      }
-                    }}
-                    style={{ flex: 1, minWidth: 200, padding: '4px 8px', fontSize: 11.5 }}
-                  />
-                  <button type="button" className="kb-scope-add" onClick={addScopePath}>
-                    + Add path
-                  </button>
-                </div>
-              </div>
-
               {/* AGENT */}
               <div className="kb-field">
                 <label className="kb-field-label">Agent</label>
                 <div className="kb-sub-grid">
-                  <button
-                    type="button"
-                    className="kb-pill-select"
-                    onClick={() => setAssignee((a) => (a === 'claude' ? 'me' : 'claude'))}
-                  >
+                  <label className="kb-pill-select">
                     <span className="lbl">assignee</span>
-                    <span className="v">{assignee === 'claude' ? 'claude (auto)' : 'me (manual)'}</span>
+                    <select
+                      value={assignee}
+                      onChange={(e) => setAssignee(e.target.value as Assignee)}
+                      className="kb-pill-select-native"
+                    >
+                      <option value="claude">claude (auto)</option>
+                      <option value="me">me (manual)</option>
+                    </select>
                     <span className="caret">▾</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="kb-pill-select"
-                    onClick={() => setModel((m) => (m === 'opus' ? 'sonnet' : 'opus'))}
-                  >
+                  </label>
+                  <label className="kb-pill-select">
                     <span className="lbl">model</span>
-                    <span className="v mono">{model}</span>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value as Model)}
+                      className="kb-pill-select-native mono"
+                    >
+                      <option value="opus">opus</option>
+                      <option value="sonnet">sonnet</option>
+                    </select>
                     <span className="caret">▾</span>
-                  </button>
+                  </label>
+                  <label className="kb-pill-select">
+                    <span className="lbl">effort</span>
+                    <select
+                      value={effort}
+                      onChange={(e) => setEffort(e.target.value as Effort)}
+                      className="kb-pill-select-native mono"
+                    >
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                      <option value="max">max</option>
+                    </select>
+                    <span className="caret">▾</span>
+                  </label>
                 </div>
               </div>
 

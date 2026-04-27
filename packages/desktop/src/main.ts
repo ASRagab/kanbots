@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
 import {
+  createHandlers,
   createSupervisor,
-  startServer,
+  reconcileIssueLabels,
   type AgentSupervisor,
   type DraftIssueFn,
 } from '@kanbots/api';
@@ -23,13 +24,17 @@ import {
   type Store,
   type WorkspaceConfig,
 } from '@kanbots/local-store';
+import {
+  cancelClaudeLogin,
+  isClaudeAuthenticated,
+  startClaudeLogin,
+} from './claude-auth.js';
+import {
+  createSubscriptionRegistry,
+  type OwnedSubscriptionRegistry,
+} from './ipc/subscriptions.js';
+import { registerHandlers } from './ipc/register.js';
 import type { ActiveWorkspaceInfo, BootstrapPayload, RecentWorkspace } from './types.js';
-
-interface RunningServer {
-  port: number;
-  host: string;
-  close: () => Promise<void>;
-}
 
 interface ActiveWorkspace {
   repoPath: string;
@@ -38,7 +43,10 @@ interface ActiveWorkspace {
   source: IssueSource;
   supervisor: AgentSupervisor;
   draftIssue: DraftIssueFn;
-  server: RunningServer;
+  subscriptions: OwnedSubscriptionRegistry;
+  unregisterHandlers: () => void;
+  ownerId: number;
+  detachOwnerCleanup: () => void;
 }
 
 let activeWorkspace: ActiveWorkspace | null = null;
@@ -117,7 +125,17 @@ async function buildSource(config: WorkspaceConfig, store: Store): Promise<Issue
 async function closeActiveWorkspace(): Promise<void> {
   if (!activeWorkspace) return;
   try {
-    await activeWorkspace.server.close();
+    activeWorkspace.detachOwnerCleanup();
+  } catch {
+    // ignore
+  }
+  try {
+    activeWorkspace.subscriptions.closeAllForOwner(activeWorkspace.ownerId);
+  } catch {
+    // ignore
+  }
+  try {
+    activeWorkspace.unregisterHandlers();
   } catch {
     // ignore
   }
@@ -156,6 +174,15 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
   const supervisor = createSupervisor({ store, repoPath: gitRoot });
   const draftIssue = createComposer({ cwd: gitRoot });
 
+  // Demote any in-progress / agent-running labels left over from a previous
+  // session. The supervisor sweep above marked stale runs failed; this
+  // mirrors that on the issue side so the board doesn't show ghost work.
+  const reconcileOwner = config.mode === 'github' ? config.owner : 'local';
+  const reconcileRepo = config.mode === 'github' ? config.repo : config.name;
+  await reconcileIssueLabels(source, store, reconcileOwner, reconcileRepo).catch(() => {
+    // best-effort
+  });
+
   const apiConfig =
     config.mode === 'github'
       ? {
@@ -172,15 +199,39 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
           authorLogin: config.authorLogin,
         };
 
-  const server = await startServer({
-    source,
-    store,
-    config: apiConfig,
-    draftIssue,
+  const subscriptions = createSubscriptionRegistry({
     supervisor,
-    port: 0,
-    host: '127.0.0.1',
+    forward: (payload) => {
+      const sender = mainWindow?.webContents;
+      if (!sender || sender.isDestroyed()) return;
+      sender.send('agent-runs:events:data', payload);
+    },
   });
+  const handlers = createHandlers({
+    deps: { source, store, config: apiConfig, supervisor, draftIssue },
+    subscriptions,
+  });
+  const unregisterHandlers = registerHandlers(handlers, subscriptions);
+
+  // Tie subscriptions to the renderer that opened them. When the webContents
+  // is destroyed (window closed, render process gone) we drop everything to
+  // avoid pinning supervisor listeners forever.
+  const ownerId = mainWindow?.webContents.id ?? -1;
+  const detachOwnerCleanup = (() => {
+    const sender = mainWindow?.webContents;
+    if (!sender) return () => {};
+    const handler = (): void => {
+      subscriptions.closeAllForOwner(ownerId);
+    };
+    sender.on('destroyed', handler);
+    return () => {
+      try {
+        sender.removeListener('destroyed', handler);
+      } catch {
+        // sender already gone
+      }
+    };
+  })();
 
   activeWorkspace = {
     repoPath: gitRoot,
@@ -189,7 +240,10 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     source,
     supervisor,
     draftIssue,
-    server,
+    subscriptions,
+    unregisterHandlers,
+    ownerId,
+    detachOwnerCleanup,
   };
 
   await ensureGitignoreEntry(gitRoot, '.kanbots/').catch(() => {
@@ -207,19 +261,32 @@ function activeWorkspaceInfo(): ActiveWorkspaceInfo | null {
   return { repoPath: activeWorkspace.repoPath, config: activeWorkspace.config };
 }
 
-function apiBaseUrl(): string {
-  if (!activeWorkspace) return '';
-  return `http://${activeWorkspace.server.host}:${activeWorkspace.server.port}`;
-}
-
 function registerIpc(): void {
   ipcMain.handle('kanbots:bootstrap', async (): Promise<BootstrapPayload> => {
-    const recents = await pruneMissingRecents();
+    const [recents, claudeAuthed] = await Promise.all([
+      pruneMissingRecents(),
+      isClaudeAuthenticated(),
+    ]);
     return {
-      apiBaseUrl: apiBaseUrl(),
       workspace: activeWorkspaceInfo(),
       recents,
+      claudeAuthed,
     };
+  });
+
+  ipcMain.handle('kanbots:claude-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isClaudeAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:claude-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startClaudeLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:claude-login-cancel', async (): Promise<void> => {
+    cancelClaudeLogin();
   });
 
   ipcMain.handle('kanbots:pick-folder', async (): Promise<string | null> => {
@@ -253,6 +320,23 @@ function registerIpc(): void {
   ipcMain.handle('kanbots:recent-workspaces', async (): Promise<RecentWorkspace[]> => {
     return pruneMissingRecents();
   });
+
+  ipcMain.handle('kanbots:window-minimize', () => {
+    mainWindow?.minimize();
+  });
+
+  ipcMain.handle('kanbots:window-toggle-maximize', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  });
+
+  ipcMain.handle('kanbots:window-close', () => {
+    mainWindow?.close();
+  });
 }
 
 async function createWindow(): Promise<void> {
@@ -260,6 +344,9 @@ async function createWindow(): Promise<void> {
     width: 1200,
     height: 800,
     title: 'kanbots',
+    frame: false,
+    titleBarStyle: 'hidden',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -285,6 +372,7 @@ async function createWindow(): Promise<void> {
 }
 
 void app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   registerIpc();
   await createWindow();
 

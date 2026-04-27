@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type Mutator<T> = (next: T | null | ((prev: T | null) => T | null)) => void;
 
@@ -7,6 +7,7 @@ export interface FetchState<T> {
   loading: boolean;
   error: Error | null;
   mutate: Mutator<T>;
+  refetch: () => Promise<void>;
 }
 
 interface InternalState<T> {
@@ -21,12 +22,14 @@ export function useFetch<T>(key: string, fetcher: () => Promise<T>): FetchState<
     loading: true,
     error: null,
   });
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
 
   useEffect(() => {
     let cancelled = false;
     setState((prev) => ({ ...prev, loading: true }));
 
-    fetcher().then(
+    fetcherRef.current().then(
       (data) => {
         if (!cancelled) setState({ data, loading: false, error: null });
       },
@@ -50,5 +53,15 @@ export function useFetch<T>(key: string, fetcher: () => Promise<T>): FetchState<
     });
   }, []);
 
-  return { ...state, mutate };
+  const refetch = useCallback(async (): Promise<void> => {
+    try {
+      const data = await fetcherRef.current();
+      setState({ data, loading: false, error: null });
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      setState((prev) => ({ ...prev, loading: false, error }));
+    }
+  }, []);
+
+  return { ...state, mutate, refetch };
 }

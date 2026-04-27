@@ -6,12 +6,12 @@ import { useTweaks } from './hooks/useTweaks.js';
 import { IssuesProvider, useIssues } from './hooks/useIssues.js';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.js';
 import { Board } from './pages/Board.js';
+import { ClaudeLoginGate } from './pages/ClaudeLoginGate.js';
 import { WorkspacePicker } from './pages/WorkspacePicker.js';
 import { api } from './api.js';
 import { Window } from './components/shell/Window.js';
 import { Shell } from './components/shell/Shell.js';
 import { LeftRail } from './components/rail/LeftRail.js';
-import { Inspector } from './components/inspector/Inspector.js';
 import { TaskDetailModal } from './components/modals/TaskDetailModal.js';
 import { TaskCreateModal } from './components/modals/TaskCreateModal.js';
 import { SplitModal } from './components/modals/SplitModal.js';
@@ -25,6 +25,7 @@ interface AppProps {
   workspace: ActiveWorkspaceInfo | null;
   initialRecents: RecentWorkspace[];
   hasBridge: boolean;
+  initialClaudeAuthed: boolean;
 }
 
 function describeFolder(config: Config | null): string {
@@ -46,9 +47,8 @@ function ShellHost({ config }: { config: Config | null }) {
   const { mutate, issues } = useIssues();
 
   useEffect(() => {
-    document.documentElement.dataset.kbInspector = tweaks.showInspector ? 'on' : 'off';
     document.documentElement.dataset.kbRail = tweaks.showRail ? 'on' : 'off';
-  }, [tweaks.showInspector, tweaks.showRail]);
+  }, [tweaks.showRail]);
 
   useEffect(() => {
     if (route.name === 'issue' && selectedNumber !== route.number) {
@@ -108,8 +108,6 @@ function ShellHost({ config }: { config: Config | null }) {
         branch="main"
         showRail={tweaks.showRail}
         onToggleRail={() => setTweak('showRail', !tweaks.showRail)}
-        showInspector={tweaks.showInspector}
-        onToggleInspector={() => setTweak('showInspector', !tweaks.showInspector)}
         tweaksOpen={tweaksOpen}
         onToggleTweaks={() => setTweaksOpen((v) => !v)}
       >
@@ -129,11 +127,6 @@ function ShellHost({ config }: { config: Config | null }) {
               onOpenCreate={() => openCreate()}
               onOpenPalette={() => setPaletteOpen(true)}
             />
-          }
-          inspector={
-            tweaks.showInspector ? (
-              <Inspector selectedNumber={selectedNumber} onExpand={openDetail} />
-            ) : null
           }
         />
       </Window>
@@ -189,8 +182,13 @@ function ShellHost({ config }: { config: Config | null }) {
   );
 }
 
-export function App({ workspace, initialRecents, hasBridge }: AppProps) {
+export function App({ workspace, initialRecents, hasBridge, initialClaudeAuthed }: AppProps) {
+  const [claudeAuthed, setClaudeAuthed] = useState(initialClaudeAuthed);
   const { data: config } = useFetch('config', () => api.config());
+
+  if (hasBridge && !claudeAuthed) {
+    return <ClaudeLoginGate onAuthed={() => setClaudeAuthed(true)} />;
+  }
 
   if (hasBridge && !workspace) {
     return (

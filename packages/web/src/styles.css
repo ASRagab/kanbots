@@ -272,21 +272,6 @@ a:hover {
   background: #6f42c1;
 }
 
-.labels {
-  margin-top: 8px;
-}
-
-.label {
-  display: inline-block;
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  background: #ddd;
-  margin-right: 4px;
-  margin-bottom: 4px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-}
-
 .markdown {
   white-space: pre-wrap;
   word-wrap: break-word;

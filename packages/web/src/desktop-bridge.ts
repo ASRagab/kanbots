@@ -1,3 +1,8 @@
+// The Window['kanbots'] type and the full KanbotsBridge interface are
+// declared in `./global.d.ts` (the bridge is a single object that mixes
+// lifecycle methods with the typed invoke/subscribe channels). This
+// module owns only the lifecycle data shapes and a small accessor.
+
 export interface ActiveWorkspaceInfo {
   repoPath: string;
   config:
@@ -12,25 +17,11 @@ export interface RecentWorkspace {
 }
 
 export interface BootstrapPayload {
-  apiBaseUrl: string;
   workspace: ActiveWorkspaceInfo | null;
   recents: RecentWorkspace[];
+  claudeAuthed: boolean;
 }
 
-export interface KanbotsBridge {
-  bootstrap(): Promise<BootstrapPayload>;
-  pickFolder(): Promise<string | null>;
-  openWorkspace(repoPath: string): Promise<{ ok: true } | { ok: false; error: string }>;
-  closeWorkspace(): Promise<void>;
-  recentWorkspaces(): Promise<RecentWorkspace[]>;
-}
-
-declare global {
-  interface Window {
-    kanbots?: KanbotsBridge;
-  }
-}
-
-export function getBridge(): KanbotsBridge | null {
+export function getBridge(): NonNullable<Window['kanbots']> | null {
   return typeof window !== 'undefined' && window.kanbots ? window.kanbots : null;
 }

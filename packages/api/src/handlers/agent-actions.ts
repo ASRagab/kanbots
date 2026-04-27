@@ -1,0 +1,255 @@
+import type { Issue } from '@kanbots/core';
+import type { AgentRun, Store } from '@kanbots/local-store';
+import { z } from 'zod';
+import type { DecoratedIssue, SplitResult } from '../bridge.js';
+import { buildActiveRunMap, decorateIssue } from './issues.js';
+import { badRequest, parseArgs } from './errors.js';
+import type { HandlerDeps } from './types.js';
+
+const REVIEWER_SYSTEM_PROMPT = `You are a code reviewer for a kanbots task.
+
+Your job is to read the diff already in this worktree and produce a focused review.
+
+1. Run \`git diff\` to read the changes.
+2. Read the linked issue body (the user's prompt has it).
+3. Identify: bugs, missed edge cases, places where the change diverges from the
+   issue's acceptance criteria, opportunities to simplify.
+4. Emit your review as a single text response. Do NOT modify code. Do NOT
+   commit. Do NOT spawn checks.
+5. End your turn after the review.`;
+
+const startAgentSchema = z
+  .object({
+    number: z.number().int().positive(),
+    threadId: z.number().int().positive(),
+    prompt: z.string().min(1).max(20_000),
+    appendSystemPrompt: z.string().max(20_000).optional(),
+    model: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+const issueNumberSchema = z
+  .object({
+    number: z.number().int().positive(),
+  })
+  .strict();
+
+const splitSchema = z
+  .object({
+    number: z.number().int().positive(),
+    subtasks: z
+      .array(
+        z
+          .object({
+            title: z.string().min(1).max(200),
+            body: z.string().max(20_000).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+    dispatch: z.boolean().optional(),
+  })
+  .strict();
+
+const reviewerSchema = z
+  .object({
+    number: z.number().int().positive(),
+    threadId: z.number().int().positive().optional(),
+    prompt: z.string().min(1).max(20_000).optional(),
+    model: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+export interface StartAgentArgs {
+  number: number;
+  threadId: number;
+  prompt: string;
+  appendSystemPrompt?: string;
+  model?: string;
+}
+
+export interface NumberArgs {
+  number: number;
+}
+
+export interface SplitArgs {
+  number: number;
+  subtasks: Array<{ title: string; body?: string }>;
+  dispatch?: boolean;
+}
+
+export interface ReviewerArgs {
+  number: number;
+  threadId?: number;
+  prompt?: string;
+  model?: string;
+}
+
+export async function startAgent(
+  deps: HandlerDeps,
+  args: StartAgentArgs,
+): Promise<AgentRun> {
+  const parsed = parseArgs(startAgentSchema, args);
+  return deps.supervisor.start({
+    threadId: parsed.threadId,
+    issueNumber: parsed.number,
+    prompt: parsed.prompt,
+    ...(parsed.appendSystemPrompt !== undefined
+      ? { appendSystemPrompt: parsed.appendSystemPrompt }
+      : {}),
+    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+  });
+}
+
+export async function archive(
+  deps: HandlerDeps,
+  args: NumberArgs,
+): Promise<DecoratedIssue> {
+  const parsed = parseArgs(issueNumberSchema, args);
+  const thread = findThreadForIssue(deps.store, parsed.number);
+  if (thread) {
+    const runs = deps.store.agentRuns
+      .listByThread(thread.id)
+      .filter(
+        (r) =>
+          r.status === 'starting' ||
+          r.status === 'running' ||
+          r.status === 'awaiting_input',
+      );
+    for (const run of runs) {
+      await deps.supervisor.stop(run.id);
+    }
+  }
+  const issue = await deps.source.getIssue(parsed.number);
+  const labels = issue.labels.filter(
+    (l) =>
+      !l.startsWith('status:') && !l.startsWith('agent:') && l !== 'archived',
+  );
+  labels.push('archived');
+  const updated = await deps.source.updateIssue(parsed.number, {
+    labels,
+    state: 'closed',
+  });
+  return decorateIssue(updated);
+}
+
+export async function approve(
+  deps: HandlerDeps,
+  args: NumberArgs,
+): Promise<DecoratedIssue> {
+  const parsed = parseArgs(issueNumberSchema, args);
+  const issue = await deps.source.getIssue(parsed.number);
+  const labels = issue.labels.filter(
+    (l) => !l.startsWith('status:') && !l.startsWith('agent:'),
+  );
+  labels.push('status:done', 'agent:idle');
+  const updated = await deps.source.updateIssue(parsed.number, {
+    labels,
+    state: 'closed',
+  });
+  return decorateIssue(updated);
+}
+
+export async function requestChanges(
+  deps: HandlerDeps,
+  args: NumberArgs,
+): Promise<DecoratedIssue> {
+  const parsed = parseArgs(issueNumberSchema, args);
+  const issue = await deps.source.getIssue(parsed.number);
+  const labels = issue.labels.filter(
+    (l) => !l.startsWith('status:') && !l.startsWith('agent:'),
+  );
+  labels.push('status:in-progress', 'agent:blocked');
+  const updated = await deps.source.updateIssue(parsed.number, { labels });
+  return decorateIssue(updated);
+}
+
+export async function split(
+  deps: HandlerDeps,
+  args: SplitArgs,
+): Promise<SplitResult> {
+  const parsed = parseArgs(splitSchema, args);
+  const parent = await deps.source.getIssue(parsed.number);
+  const labels = (parent.labels ?? []).filter(
+    (l) => !l.startsWith('status:') && !l.startsWith('agent:'),
+  );
+  const created: Issue[] = [];
+  for (const sub of parsed.subtasks) {
+    const child = await deps.source.createIssue({
+      title: sub.title,
+      ...(sub.body !== undefined ? { body: sub.body } : {}),
+      labels: [...labels, 'status:backlog', `parent:${parsed.number}`],
+    });
+    created.push(child);
+    if (parsed.dispatch) {
+      const thread = ensureThread(deps.store, child.number);
+      deps.store.messages.create({
+        threadId: thread.id,
+        role: 'user',
+        body: sub.body ?? sub.title,
+      });
+      try {
+        await deps.supervisor.start({
+          threadId: thread.id,
+          issueNumber: child.number,
+          prompt: sub.body ?? sub.title,
+        });
+      } catch {
+        // Surfaced via run rows; child issue still created.
+      }
+    }
+  }
+  const activeRunMap = buildActiveRunMap(deps);
+  const decoratedChildren = created.map((c) =>
+    decorateIssue(c, activeRunMap.get(c.number) ?? null),
+  );
+  return { parent: parsed.number, children: decoratedChildren };
+}
+
+export async function reviewer(
+  deps: HandlerDeps,
+  args: ReviewerArgs,
+): Promise<AgentRun> {
+  const parsed = parseArgs(reviewerSchema, args);
+  const issue = await deps.source.getIssue(parsed.number);
+  let threadId = parsed.threadId;
+  if (threadId === undefined) {
+    const existingThread = findThreadForIssue(deps.store, parsed.number);
+    if (existingThread) {
+      threadId = existingThread.id;
+    } else {
+      throw badRequest(
+        'no thread for this issue yet — send a message first or pass threadId explicitly',
+      );
+    }
+  }
+  const reviewerPrompt =
+    parsed.prompt ??
+    `Review the implementation against the issue:\n\n${issue.title}\n\n${issue.body ?? ''}`;
+  return deps.supervisor.start({
+    threadId,
+    issueNumber: parsed.number,
+    prompt: reviewerPrompt,
+    appendSystemPrompt: REVIEWER_SYSTEM_PROMPT,
+    ...(parsed.model ? { model: parsed.model } : {}),
+  });
+}
+
+function findThreadForIssue(
+  store: Store,
+  issueNumber: number,
+): { id: number; issueNumber: number } | null {
+  const all = store.threads.list();
+  return all.find((t) => t.issueNumber === issueNumber) ?? null;
+}
+
+function ensureThread(store: Store, issueNumber: number): { id: number } {
+  const existing = findThreadForIssue(store, issueNumber);
+  if (existing) return { id: existing.id };
+  return store.threads.create({
+    repoOwner: 'local',
+    repoName: 'split',
+    issueNumber,
+  });
+}

@@ -1,5 +1,12 @@
 # kanbots — phased refactor & feature build plan
 
+> **Note (post-pivot):** the architecture has shifted to IPC-only. The
+> Express + SSE plumbing referenced throughout the phases below has been
+> replaced by `window.kanbots.invoke` / `subscribe`. The phase content
+> still describes the feature roadmap accurately; only the transport
+> assumption changed. See `docs/pivot/README.md` (planning) and
+> `docs/pivot/COMPLETED.md` (record) for the new contract.
+
 Companion to `design_handoff_kanbots/README.md`. Each phase ships a usable
 surface; later phases deepen behavior. Mock first where backend is missing,
 wire to live data as soon as the schema lands.

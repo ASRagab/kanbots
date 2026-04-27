@@ -1,0 +1,523 @@
+import {
+  agentFromLabels,
+  statusFromLabels,
+  type Comment,
+  type CreateIssueInput,
+  type Issue,
+  type StatusKey,
+  type UpdateIssuePatch,
+} from '@kanbots/core';
+import type { AgentRun, Message } from '@kanbots/local-store';
+import { z } from 'zod';
+import type {
+  DecoratedIssue,
+  DispatchResult,
+  IssueActiveRunPayload,
+  IssueDetail,
+  PostMessageResult,
+  ThreadPayload,
+} from '../bridge.js';
+import { alreadyActive, parseArgs } from './errors.js';
+import type { HandlerDeps } from './types.js';
+
+const issueListSchema = z
+  .object({
+    state: z.enum(['open', 'closed', 'all']).optional(),
+  })
+  .strict();
+
+const issueGetSchema = z
+  .object({
+    number: z.number().int().positive(),
+  })
+  .strict();
+
+const issueCreateSchema = z
+  .object({
+    title: z.string().min(1).max(200),
+    body: z.string().max(65_536).optional(),
+    labels: z.array(z.string()).optional(),
+    assignees: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const issuePatchSchema = z
+  .object({
+    number: z.number().int().positive(),
+    patch: z
+      .object({
+        title: z.string().min(1).optional(),
+        body: z.string().optional(),
+        state: z.enum(['open', 'closed']).optional(),
+        labels: z.array(z.string()).optional(),
+        assignees: z.array(z.string()).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const addCommentSchema = z
+  .object({
+    number: z.number().int().positive(),
+    body: z.string().min(1).max(65_536),
+  })
+  .strict();
+
+const postMessageSchema = z
+  .object({
+    number: z.number().int().positive(),
+    body: z.string().min(1).max(65_536),
+    dispatch: z.boolean().optional(),
+    model: z.string().min(1).max(120).optional(),
+    appendSystemPrompt: z.string().max(20_000).optional(),
+  })
+  .strict();
+
+const listRunsSchema = z
+  .object({
+    number: z.number().int().positive(),
+  })
+  .strict();
+
+const dispatchSchema = z
+  .object({
+    number: z.number().int().positive(),
+    fromStatus: z
+      .enum(['backlog', 'todo', 'inProgress', 'review', 'done'])
+      .nullable()
+      .optional(),
+    model: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+export interface ListIssuesArgs {
+  state?: 'open' | 'closed' | 'all';
+}
+
+export interface GetIssueArgs {
+  number: number;
+}
+
+export interface CreateIssueArgs {
+  title: string;
+  body?: string;
+  labels?: string[];
+  assignees?: string[];
+}
+
+export interface PatchIssueArgs {
+  number: number;
+  patch: UpdateIssuePatch;
+}
+
+export interface AddCommentArgs {
+  number: number;
+  body: string;
+}
+
+export interface PostMessageArgs {
+  number: number;
+  body: string;
+  dispatch?: boolean;
+  model?: string;
+  appendSystemPrompt?: string;
+}
+
+export interface ListRunsArgs {
+  number: number;
+}
+
+export interface DispatchArgs {
+  number: number;
+  fromStatus: StatusKey | null;
+  model?: string;
+}
+
+export async function list(
+  deps: HandlerDeps,
+  args: ListIssuesArgs,
+): Promise<DecoratedIssue[]> {
+  const parsed = parseArgs(issueListSchema, args ?? {});
+  const issues = await deps.source.listIssues(
+    parsed.state ? { state: parsed.state } : {},
+  );
+  const activeRunMap = buildActiveRunMap(deps);
+  return issues.map((issue) =>
+    decorateIssue(issue, activeRunMap.get(issue.number) ?? null),
+  );
+}
+
+export async function get(
+  deps: HandlerDeps,
+  args: GetIssueArgs,
+): Promise<IssueDetail> {
+  const parsed = parseArgs(issueGetSchema, args);
+  const [issue, comments] = await Promise.all([
+    deps.source.getIssue(parsed.number),
+    deps.source.listComments(parsed.number),
+  ]);
+  const thread = deps.store.threads.findByIssue(
+    deps.config.owner,
+    deps.config.repo,
+    parsed.number,
+  );
+  const threadPayload = thread ? buildThreadPayload(deps, thread.id) : null;
+  const activeRunMap = buildActiveRunMap(deps);
+  return {
+    issue: decorateIssue(issue, activeRunMap.get(parsed.number) ?? null),
+    comments,
+    thread: threadPayload,
+  };
+}
+
+export async function create(
+  deps: HandlerDeps,
+  args: CreateIssueArgs,
+): Promise<DecoratedIssue> {
+  const parsed = parseArgs(issueCreateSchema, args);
+  const input: CreateIssueInput = {
+    title: parsed.title,
+    ...(parsed.body !== undefined ? { body: parsed.body } : {}),
+    ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
+    ...(parsed.assignees !== undefined ? { assignees: parsed.assignees } : {}),
+  };
+  const issue = await deps.source.createIssue(input);
+  return decorateIssue(issue);
+}
+
+export async function patch(
+  deps: HandlerDeps,
+  args: PatchIssueArgs,
+): Promise<DecoratedIssue> {
+  const parsed = parseArgs(issuePatchSchema, args);
+  const updates: UpdateIssuePatch = {
+    ...(parsed.patch.title !== undefined ? { title: parsed.patch.title } : {}),
+    ...(parsed.patch.body !== undefined ? { body: parsed.patch.body } : {}),
+    ...(parsed.patch.state !== undefined ? { state: parsed.patch.state } : {}),
+    ...(parsed.patch.labels !== undefined ? { labels: parsed.patch.labels } : {}),
+    ...(parsed.patch.assignees !== undefined
+      ? { assignees: parsed.patch.assignees }
+      : {}),
+  };
+  const issue = await deps.source.updateIssue(parsed.number, updates);
+  return decorateIssue(issue);
+}
+
+export async function addComment(
+  deps: HandlerDeps,
+  args: AddCommentArgs,
+): Promise<Comment> {
+  const parsed = parseArgs(addCommentSchema, args);
+  return deps.source.addComment(parsed.number, parsed.body);
+}
+
+export async function postMessage(
+  deps: HandlerDeps,
+  args: PostMessageArgs,
+): Promise<PostMessageResult> {
+  const parsed = parseArgs(postMessageSchema, args);
+  const dispatch = parsed.dispatch ?? true;
+
+  const thread = deps.store.threads.getOrCreate({
+    repoOwner: deps.config.owner,
+    repoName: deps.config.repo,
+    issueNumber: parsed.number,
+  });
+  const message = deps.store.messages.create({
+    threadId: thread.id,
+    role: 'user',
+    body: parsed.body,
+  });
+
+  let dispatchError: string | null = null;
+  if (dispatch) {
+    const active = deps.store.agentRuns.findActiveForThread(thread.id);
+    try {
+      if (active && active.status === 'awaiting_input') {
+        await deps.supervisor.resume({ runId: active.id, prompt: parsed.body });
+      } else if (active === null) {
+        await deps.supervisor.start({
+          threadId: thread.id,
+          issueNumber: parsed.number,
+          prompt: parsed.body,
+          ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+          ...(parsed.appendSystemPrompt !== undefined
+            ? { appendSystemPrompt: parsed.appendSystemPrompt }
+            : {}),
+        });
+      }
+    } catch (err) {
+      dispatchError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  return {
+    message,
+    thread: buildThreadPayload(deps, thread.id),
+    ...(dispatchError !== null ? { dispatchError } : {}),
+  };
+}
+
+export async function listRuns(
+  deps: HandlerDeps,
+  args: ListRunsArgs,
+): Promise<AgentRun[]> {
+  const parsed = parseArgs(listRunsSchema, args);
+  const thread = deps.store.threads.findByIssue(
+    deps.config.owner,
+    deps.config.repo,
+    parsed.number,
+  );
+  if (!thread) return [];
+  const runs = deps.store.agentRuns.listByThread(thread.id);
+  runs.sort((a, b) => b.id - a.id);
+  return runs;
+}
+
+export async function dispatch(
+  deps: HandlerDeps,
+  args: DispatchArgs,
+): Promise<DispatchResult> {
+  const parsed = parseArgs(dispatchSchema, args);
+  const fromStatus = parsed.fromStatus ?? null;
+
+  const issue = await deps.source.getIssue(parsed.number);
+  const thread = deps.store.threads.getOrCreate({
+    repoOwner: deps.config.owner,
+    repoName: deps.config.repo,
+    issueNumber: parsed.number,
+  });
+
+  const active = deps.store.agentRuns.findActiveForThread(thread.id);
+  if (active !== null) {
+    throw alreadyActive(
+      `agent run #${active.id} is already ${active.status}`,
+      active,
+    );
+  }
+
+  const priorRuns = deps.store.agentRuns.listByThread(thread.id);
+  const kickoff = buildDispatchKickoff(
+    { number: issue.number, title: issue.title, body: issue.body ?? '' },
+    fromStatus,
+    priorRuns.length > 0,
+  );
+
+  const message = deps.store.messages.create({
+    threadId: thread.id,
+    role: 'system',
+    body: dispatchSummary(fromStatus, priorRuns.length > 0),
+  });
+
+  const run = await deps.supervisor.start({
+    threadId: thread.id,
+    issueNumber: parsed.number,
+    prompt: kickoff,
+    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+  });
+  return { run, message };
+}
+
+export function decorateIssue(
+  issue: Issue,
+  activeRun: IssueActiveRunPayload | null = null,
+): DecoratedIssue {
+  return {
+    ...issue,
+    status: statusFromLabels(issue.labels),
+    agent: agentFromLabels(issue.labels),
+    activeRun,
+  };
+}
+
+export function buildActiveRunMap(
+  deps: HandlerDeps,
+): Map<number, IssueActiveRunPayload> {
+  const out = new Map<number, IssueActiveRunPayload>();
+  const active = deps.store.agentRuns.listActiveForRepo(
+    deps.config.owner,
+    deps.config.repo,
+  );
+  if (active.length === 0) return out;
+  const runIds = active.map((r) => r.id);
+  const latestTool = deps.store.events.findLatestToolUseByRun(runIds);
+  const pending = deps.store.cards.findPendingByRuns(runIds);
+  const checksByRun = deps.store.checks.findLatestByRunsAndKinds(runIds);
+  for (const row of active) {
+    const tool = latestTool.get(row.id);
+    let toolName: string | null = null;
+    let toolArg: string | null = null;
+    if (tool && tool.type === 'tool_use') {
+      const p = tool.payload as { name?: string; input?: unknown } | null;
+      toolName = p?.name ?? null;
+      const input = p?.input;
+      if (typeof input === 'string') {
+        toolArg = input;
+      } else if (input !== null && typeof input === 'object') {
+        try {
+          toolArg = JSON.stringify(input);
+        } catch {
+          toolArg = null;
+        }
+      }
+    }
+    const card = pending.get(row.id);
+    let decision: IssueActiveRunPayload['pendingDecision'] = null;
+    if (card && card.type === 'decision') {
+      const p = card.payload as
+        | {
+            question?: string;
+            options?: Array<{ value?: string; label?: string }>;
+          }
+        | undefined;
+      if (p && typeof p.question === 'string' && Array.isArray(p.options)) {
+        const options = p.options
+          .filter(
+            (o): o is { value: string; label: string } =>
+              typeof o?.value === 'string' && typeof o?.label === 'string',
+          )
+          .map((o) => ({ value: o.value, label: o.label }));
+        if (options.length > 0) decision = { question: p.question, options };
+      }
+    }
+    const checkMap = checksByRun.get(row.id);
+    const checksPayload = checkMap
+      ? {
+          typecheck: (checkMap.get('typecheck')?.status ?? 'idle') as
+            | 'pass'
+            | 'fail'
+            | 'running'
+            | 'idle',
+          tests: (checkMap.get('tests')?.status ?? 'idle') as
+            | 'pass'
+            | 'fail'
+            | 'running'
+            | 'idle',
+          lint: (checkMap.get('lint')?.status ?? 'idle') as
+            | 'pass'
+            | 'fail'
+            | 'running'
+            | 'idle',
+        }
+      : null;
+    out.set(row.issueNumber, {
+      id: row.id,
+      status: row.status,
+      branch: row.branchName,
+      model: row.model,
+      startedAt: row.startedAt,
+      currentTool: toolName,
+      currentArg: toolArg,
+      totalCostUsd: row.totalCostUsd,
+      pendingDecision: decision,
+      checks: checksPayload,
+      previewUrl: row.previewUrl,
+      previewState: row.previewState,
+    });
+  }
+  return out;
+}
+
+export function buildThreadPayload(
+  deps: HandlerDeps,
+  threadId: number,
+): ThreadPayload | null {
+  const thread = deps.store.threads.findById(threadId);
+  if (!thread) return null;
+  const activeRun = deps.store.agentRuns.findActiveForThread(thread.id);
+  const latestRun = activeRun ?? deps.store.agentRuns.findLatestForThread(thread.id);
+  const messages: Message[] = deps.store.messages.list(thread.id);
+  return {
+    id: thread.id,
+    createdAt: thread.createdAt,
+    messages,
+    activeRun,
+    latestRun,
+  };
+}
+
+interface DecisionOption {
+  value: string;
+  label: string;
+}
+
+function buildDispatchKickoff(
+  issue: { number: number; title: string; body: string },
+  fromStatus: StatusKey | null,
+  hasPriorRuns: boolean,
+): string {
+  let context: string;
+  let question: string;
+  let options: DecisionOption[];
+
+  if (fromStatus === 'review') {
+    context =
+      'The user moved this task from Review back to In Progress. The work was at one point ready for review.';
+    question = 'This task came back from Review. What should I focus on?';
+    options = [
+      { value: 'address_review', label: 'Address the latest review feedback' },
+      { value: 'continue', label: 'Continue the previous direction' },
+      { value: 'fresh', label: 'Start with a fresh approach' },
+      { value: 'clarify', label: 'Ask for clarification first' },
+    ];
+  } else if (fromStatus === 'done') {
+    context =
+      'The user moved this task from Done back to In Progress. It was previously considered finished but the user wants more work on it.';
+    question =
+      'This task was Done and is now In Progress again. What should change?';
+    options = [
+      { value: 'investigate', label: 'Investigate what changed and reopen the work' },
+      { value: 'extend', label: 'Extend the existing implementation' },
+      { value: 'fresh', label: 'Restart with a fresh approach' },
+      { value: 'clarify', label: 'Ask for clarification first' },
+    ];
+  } else if (hasPriorRuns) {
+    context =
+      'The user moved this task to In Progress. There are prior agent runs on this thread but the task never reached Review. The work may be partial.';
+    question =
+      'This task has prior runs that did not finish. How should I proceed?';
+    options = [
+      { value: 'continue', label: 'Continue from where the prior runs left off' },
+      { value: 'fresh', label: 'Start fresh and ignore prior runs' },
+      { value: 'investigate', label: 'Investigate the prior work first' },
+      { value: 'clarify', label: 'Ask for clarification first' },
+    ];
+  } else {
+    context =
+      'The user just moved this task to In Progress. This is the first agent run for it.';
+    question = 'Ready to start. How should I approach this?';
+    options = [
+      { value: 'proceed', label: 'Proceed with the description as written' },
+      { value: 'spec', label: 'Refine the spec / acceptance criteria first' },
+      { value: 'investigate', label: 'Investigate the codebase first to scope the work' },
+      { value: 'clarify', label: 'Ask for clarification first' },
+    ];
+  }
+
+  const taskHeader = `Task #${issue.number}: ${issue.title}\n\n${issue.body || '(no description)'}`;
+  const decisionJson = JSON.stringify({ question, options }, null, 2);
+
+  return `${taskHeader}
+
+---
+
+CONTEXT: ${context}
+
+YOUR FIRST ACTION (do this and only this — do not call tools, do not investigate yet):
+
+\`\`\`kanbots-decision
+${decisionJson}
+\`\`\`
+
+End your turn after emitting the block. The user's choice will arrive as the next message and you will resume from there.`;
+}
+
+function dispatchSummary(
+  fromStatus: StatusKey | null,
+  hasPriorRuns: boolean,
+): string {
+  if (fromStatus === 'review') return 'Moved from Review back to In Progress.';
+  if (fromStatus === 'done') return 'Moved from Done back to In Progress.';
+  if (hasPriorRuns) return 'Moved to In Progress (prior runs exist).';
+  return 'Moved to In Progress.';
+}

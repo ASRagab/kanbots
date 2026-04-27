@@ -85,6 +85,12 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
   const prepareDir = opts.prepareWorktreeDir ?? defaultPrepareDir;
   const decisionInstructions = opts.appendSystemPromptDefault ?? DEFAULT_DECISION_PROMPT;
 
+  // Any 'starting'/'running' rows on construction belong to a previous app
+  // process — the supervisor's in-memory handles don't survive restart, so
+  // those runs are by definition dead. Mark them failed so the UI stops
+  // reporting them as live.
+  store.agentRuns.markStartingRunningAsInterrupted('interrupted: app restart');
+
   const active = new Map<number, ActiveRun>();
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
@@ -277,10 +283,21 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
     if (entry) {
       entry.handle.stop();
       await entry.handle.done;
+      const run = store.agentRuns.findById(runId);
+      if (!run) throw new Error(`agent run ${runId} not found`);
+      return run;
     }
-    const run = store.agentRuns.findById(runId);
-    if (!run) throw new Error(`agent run ${runId} not found`);
-    return run;
+    const existing = store.agentRuns.findById(runId);
+    if (!existing) throw new Error(`agent run ${runId} not found`);
+    if (!ACTIVE_STATUSES.includes(existing.status)) return existing;
+    // No live handle but DB still says active — manual escape hatch.
+    const updated = store.agentRuns.update(runId, {
+      status: 'stopped',
+      endedAt: new Date().toISOString(),
+      pid: null,
+    });
+    emitter.emit(statusChannel(runId), updated.status);
+    return updated;
   }
 
   function getRun(runId: number): AgentRun | null {
