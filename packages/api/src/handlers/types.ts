@@ -6,10 +6,26 @@ import type {
   Config,
   DraftIssueFn,
   EventSubscribeResult,
+  SentryAnalyzerFn,
   SuggestFeatureFn,
 } from '../bridge.js';
 
-export type { Config, DraftIssueFn, EventSubscribeResult, SuggestFeatureFn };
+export type {
+  Config,
+  DraftIssueFn,
+  EventSubscribeResult,
+  SentryAnalyzerFn,
+  SuggestFeatureFn,
+};
+
+export interface SentryRuntime {
+  encryptToken(plaintext: string): { buffer: Buffer; encryption: 'safe' | 'plain' };
+  decryptToken(buffer: Buffer | null, encryption: 'safe' | 'plain'): string | null;
+  envTokenOverride(): string | null;
+  safeStorageAvailable(): boolean;
+  syncNow(): Promise<{ imported: number; updated: number; totalSeen: number; lastSyncedAt: string }>;
+  restartPoller(): void;
+}
 
 export interface HandlerDeps {
   source: IssueSource;
@@ -19,6 +35,8 @@ export interface HandlerDeps {
   draftIssue: DraftIssueFn;
   suggestIssue: SuggestFeatureFn;
   autopilot: AutopilotManager;
+  analyzeSentryError: SentryAnalyzerFn;
+  sentry: SentryRuntime;
 }
 
 export interface SubscriptionRegisterArgs {

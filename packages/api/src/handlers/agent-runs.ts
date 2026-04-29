@@ -158,20 +158,27 @@ export async function promoteCommit(
   const issue = await deps.source.getIssue(thread.issueNumber);
 
   const base = await detectLocalBase(repoPath);
+  await ensureBranchAhead(repoPath, base, run.branchName);
+
   const message = `Issue #${issue.number}: ${issue.title}`;
   const baseLocation = await locateBaseCheckout(repoPath, base);
   let commitSha: string;
   if (baseLocation && (await isWorktreeClean(baseLocation))) {
     // base is already checked out cleanly somewhere — merge in place so the
     // working tree stays in sync with the moved branch ref.
-    await execFileAsync('git', ['merge', '--squash', run.branchName], {
-      cwd: baseLocation,
-    });
-    await execFileAsync('git', ['commit', '-m', message], { cwd: baseLocation });
-    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
-      cwd: baseLocation,
-    });
-    commitSha = stdout.trim();
+    try {
+      await runGit(['merge', '--squash', run.branchName], baseLocation);
+      await runGit(['commit', '-m', message], baseLocation);
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], baseLocation);
+      commitSha = stdout.trim();
+    } catch (err) {
+      // Roll back any half-applied merge so the user's checkout doesn't end
+      // up with conflict markers or staged-but-uncommitted changes.
+      await execFileAsync('git', ['reset', '--hard', 'HEAD'], {
+        cwd: baseLocation,
+      }).catch(() => undefined);
+      throw err;
+    }
   } else {
     if (baseLocation) {
       throw badRequest(
@@ -183,17 +190,13 @@ export async function promoteCommit(
     const stamp = Date.now().toString(36);
     const tmpPath = `${repoPath}/.kanbots/promote/${parsed.runId}-${stamp}`;
     await mkdir(dirname(tmpPath), { recursive: true });
-    await execFileAsync('git', ['worktree', 'add', '--detach', tmpPath, base], {
-      cwd: repoPath,
-    });
+    await runGit(['worktree', 'add', '--detach', tmpPath, base], repoPath);
     try {
-      await execFileAsync('git', ['merge', '--squash', run.branchName], { cwd: tmpPath });
-      await execFileAsync('git', ['commit', '-m', message], { cwd: tmpPath });
-      const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: tmpPath });
+      await runGit(['merge', '--squash', run.branchName], tmpPath);
+      await runGit(['commit', '-m', message], tmpPath);
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], tmpPath);
       commitSha = stdout.trim();
-      await execFileAsync('git', ['update-ref', `refs/heads/${base}`, commitSha], {
-        cwd: repoPath,
-      });
+      await runGit(['update-ref', `refs/heads/${base}`, commitSha], repoPath);
     } finally {
       await execFileAsync(
         'git',
@@ -205,6 +208,138 @@ export async function promoteCommit(
 
   const cleanup = await cleanupRunArtifacts(deps, run, repoPath);
   return { commitSha, base, cleanup };
+}
+
+async function ensureBranchAhead(
+  repoPath: string,
+  base: string,
+  branch: string,
+): Promise<void> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(
+      'git',
+      ['rev-list', '--count', `${base}..${branch}`],
+      { cwd: repoPath },
+    ));
+  } catch (err) {
+    const e = err as { stderr?: string };
+    const detail = (e.stderr ?? '').trim();
+    throw badRequest(
+      `could not compare '${branch}' against '${base}'${detail ? `: ${detail}` : ''}`,
+    );
+  }
+  if (stdout.trim() === '0') {
+    throw badRequest(
+      `branch '${branch}' has no commits beyond '${base}' — nothing to merge (already integrated?)`,
+    );
+  }
+}
+
+// Removes worktree+branch artifacts for any run in the thread whose branch
+// has zero commits beyond base — i.e. the agent's work is already in main
+// (squash-merged, PR-merged, manually integrated, …). Idempotent.
+export async function sweepMergedRunsForThread(
+  deps: HandlerDeps,
+  threadId: number,
+): Promise<{ swept: number }> {
+  const repoPath = deps.config.repoPath;
+  if (!repoPath) return { swept: 0 };
+  let base: string;
+  try {
+    base = await detectLocalBase(repoPath);
+  } catch {
+    return { swept: 0 };
+  }
+  const runs = deps.store.agentRuns.listByThread(threadId);
+  let swept = 0;
+  for (const run of runs) {
+    if (!run.branchName || !run.worktreePath) continue;
+    let isMerged = false;
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        ['rev-list', '--count', `${base}..${run.branchName}`],
+        { cwd: repoPath },
+      );
+      isMerged = stdout.trim() === '0';
+    } catch {
+      // branch missing or unreadable — leave it alone for the user to inspect.
+      continue;
+    }
+    if (!isMerged) continue;
+    const result = await cleanupRunArtifacts(deps, run, repoPath);
+    if (result.worktreeRemoved || result.branchDeleted) swept += 1;
+  }
+  return { swept };
+}
+
+// Aggressive thread-level cleanup invoked when the user explicitly marks a card
+// complete. Always force-removes worktrees so the file system goes back to a
+// clean state — but for runs whose branch has unmerged commits, it preserves
+// the branch so the agent's work isn't silently destroyed (the user can still
+// recover by running `git worktree add`). Branches already merged into base
+// are deleted along with the worktree.
+export async function sweepAllRunsForThread(
+  deps: HandlerDeps,
+  threadId: number,
+): Promise<{ worktreesRemoved: number; branchesDeleted: number; branchesKept: number }> {
+  const repoPath = deps.config.repoPath;
+  if (!repoPath) {
+    return { worktreesRemoved: 0, branchesDeleted: 0, branchesKept: 0 };
+  }
+  let base: string | null = null;
+  try {
+    base = await detectLocalBase(repoPath);
+  } catch {
+    base = null;
+  }
+  const runs = deps.store.agentRuns.listByThread(threadId);
+  let worktreesRemoved = 0;
+  let branchesDeleted = 0;
+  let branchesKept = 0;
+  for (const run of runs) {
+    if (!run.worktreePath) continue;
+    let keepBranch = true;
+    if (base !== null && run.branchName) {
+      try {
+        const { stdout } = await execFileAsync(
+          'git',
+          ['rev-list', '--count', `${base}..${run.branchName}`],
+          { cwd: repoPath },
+        );
+        keepBranch = stdout.trim() !== '0';
+      } catch {
+        // branch missing or unreadable — preserve it just in case.
+        keepBranch = true;
+      }
+    }
+    const result = await cleanupRunArtifacts(deps, run, repoPath, { keepBranch });
+    if (result.worktreeRemoved) worktreesRemoved += 1;
+    if (result.branchDeleted) branchesDeleted += 1;
+    else if (keepBranch && run.branchName) branchesKept += 1;
+  }
+  return { worktreesRemoved, branchesDeleted, branchesKept };
+}
+
+// execFileAsync's default error message is "Command failed: <cmd>", which
+// hides git's actual stderr (e.g., "nothing to commit, working tree clean").
+// Surface the stderr so the UI shows an actionable message.
+async function runGit(
+  args: string[],
+  cwd: string,
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await execFileAsync('git', args, { cwd });
+  } catch (err) {
+    if (!(err instanceof Error)) throw err;
+    const e = err as Error & { stderr?: string; stdout?: string };
+    const detail = ((e.stderr ?? '').trim() || (e.stdout ?? '').trim());
+    if (!detail) throw err;
+    const wrapped = new Error(`git ${args[0] ?? ''} failed: ${detail}`);
+    wrapped.name = e.name;
+    throw wrapped;
+  }
 }
 
 async function locateBaseCheckout(
@@ -247,6 +382,7 @@ async function cleanupRunArtifacts(
   deps: HandlerDeps,
   run: AgentRun,
   repoPath: string,
+  opts: { keepBranch?: boolean } = {},
 ): Promise<{ worktreeRemoved: boolean; branchDeleted: boolean }> {
   let worktreeRemoved = false;
   let branchDeleted = false;
@@ -269,15 +405,17 @@ async function cleanupRunArtifacts(
   } catch {
     // worktree may already be missing
   }
-  try {
-    await execFileAsync('git', ['branch', '-D', run.branchName], { cwd: repoPath });
-    branchDeleted = true;
-  } catch {
-    // branch may already be gone
+  if (!opts.keepBranch) {
+    try {
+      await execFileAsync('git', ['branch', '-D', run.branchName], { cwd: repoPath });
+      branchDeleted = true;
+    } catch {
+      // branch may already be gone
+    }
   }
   deps.store.agentRuns.update(run.id, {
     worktreePath: null,
-    branchName: null,
+    ...(opts.keepBranch ? {} : { branchName: null }),
   });
   return { worktreeRemoved, branchDeleted };
 }
@@ -359,7 +497,10 @@ async function collectDiff(
 }
 
 async function detectBase(cwd: string): Promise<string> {
-  for (const ref of ['origin/main', 'main', 'origin/master', 'master']) {
+  // Prefer local refs: worktrees are forked from the local branch, and
+  // origin/* can be far behind, which would surface unrelated upstream commits
+  // as if they were the run's diff.
+  for (const ref of ['main', 'master', 'origin/main', 'origin/master']) {
     try {
       await execFileAsync('git', ['rev-parse', '--verify', ref], { cwd });
       return ref;
@@ -371,9 +512,24 @@ async function detectBase(cwd: string): Promise<string> {
 }
 
 async function diffAgainstBase(cwd: string, base: string): Promise<DiffFile[]> {
+  // Diff against the fork point so we only see what this worktree changed —
+  // both committed and uncommitted. `base...HEAD` would miss uncommitted work,
+  // and a plain `git diff base` would also include commits that landed on
+  // base after the fork.
+  let forkPoint = base;
+  try {
+    const { stdout } = await execFileAsync('git', ['merge-base', base, 'HEAD'], {
+      cwd,
+    });
+    const trimmed = stdout.trim();
+    if (trimmed) forkPoint = trimmed;
+  } catch {
+    // no shared ancestor — fall through and let the diff fail open
+  }
+
   const nameStatus = await execFileAsync(
     'git',
-    ['diff', '--name-status', `${base}...HEAD`],
+    ['diff', '--name-status', forkPoint],
     { cwd, maxBuffer: 16 * 1024 * 1024 },
   ).catch(async () =>
     execFileAsync('git', ['diff', '--name-status', 'HEAD'], {
@@ -385,7 +541,7 @@ async function diffAgainstBase(cwd: string, base: string): Promise<DiffFile[]> {
   const statuses = parseNameStatus(nameStatus.stdout);
   if (statuses.length === 0) return [];
 
-  const patchOut = await execFileAsync('git', ['diff', `${base}...HEAD`], {
+  const patchOut = await execFileAsync('git', ['diff', forkPoint], {
     cwd,
     maxBuffer: 32 * 1024 * 1024,
   }).catch(async () =>

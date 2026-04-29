@@ -100,6 +100,14 @@ function CardBody({
         {priority ? (
           <span className={`kb-card-pri kb-pri-${priority}`}>{priority.toUpperCase()}</span>
         ) : null}
+        {issue.sentryMeta ? (
+          <span
+            className={`kb-sentry-badge kb-sentry-${issue.sentryMeta.status}`}
+            title={`Sentry · ${issue.sentryMeta.count} occurrence${issue.sentryMeta.count === 1 ? '' : 's'}`}
+          >
+            SENTRY{issue.sentryMeta.status === 'analyzed' ? ' · REVIEWED' : ''}
+          </span>
+        ) : null}
         {pill ? (
           <span className={`kb-status-pill ${pill.cls}`}>
             <span className="kb-pulse" />
@@ -316,6 +324,10 @@ export const Card = memo(CardImpl, (prev, next) => {
   const ra = a.activeRun ?? null;
   const rb = b.activeRun ?? null;
   if ((ra && rb) ? (ra.id !== rb.id || ra.status !== rb.status || ra.currentTool !== rb.currentTool || ra.currentArg !== rb.currentArg) : ra !== rb) return false;
+  // Sentry meta — re-render when status changes (e.g. after analyze)
+  const sa = a.sentryMeta ?? null;
+  const sb = b.sentryMeta ?? null;
+  if ((sa && sb) ? (sa.status !== sb.status || sa.count !== sb.count) : sa !== sb) return false;
   return true;
 });
 

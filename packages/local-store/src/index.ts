@@ -11,6 +11,8 @@ import { HttpCacheRepo } from './repos/http-cache.js';
 import { LocalIssuesRepo } from './repos/local-issues.js';
 import { MessagesRepo } from './repos/messages.js';
 import { PromotionsRepo } from './repos/promotions.js';
+import { SentryConfigRepo } from './repos/sentry-config.js';
+import { SentryImportsRepo } from './repos/sentry-imports.js';
 import { ThreadsRepo } from './repos/threads.js';
 import { WorkspacesRepo } from './repos/workspaces.js';
 
@@ -27,6 +29,8 @@ export interface Store {
   readonly workspaces: WorkspacesRepo;
   readonly folders: FoldersRepo;
   readonly autopilotSessions: AutopilotSessionsRepo;
+  readonly sentryConfig: SentryConfigRepo;
+  readonly sentryImports: SentryImportsRepo;
   readonly db: Db;
   close(): void;
 }
@@ -59,6 +63,8 @@ function wrap(db: Db): Store {
     workspaces: new WorkspacesRepo(db),
     folders: new FoldersRepo(db),
     autopilotSessions: new AutopilotSessionsRepo(db),
+    sentryConfig: new SentryConfigRepo(db),
+    sentryImports: new SentryImportsRepo(db),
     db,
     close: () => db.close(),
   };
@@ -91,6 +97,9 @@ export {
 } from './repos/local-issues.js';
 export { LocalIssueSource, type LocalIssueSourceOptions } from './local-issue-source.js';
 
+export type { SentryConfigPatch } from './repos/sentry-config.js';
+export type { UpsertSentryImportInput } from './repos/sentry-imports.js';
+
 export type { Workspace, CreateWorkspaceInput } from './repos/workspaces.js';
 export type { Folder, CreateFolderInput } from './repos/folders.js';
 
@@ -122,6 +131,7 @@ export type {
   AutopilotChildKind,
   AutopilotChildStatus,
   AutopilotConfig,
+  AutopilotEffort,
   AutopilotKind,
   AutopilotPersonaSnapshot,
   AutopilotSession,
@@ -140,6 +150,14 @@ export type {
   PromotionId,
   PromotionKind,
   Role,
+  SentryConfig,
+  SentryImport,
+  SentryImportStatus,
+  SentrySuggestion,
+  SentrySuggestionCategory,
+  SentrySuggestionConfidence,
+  SentrySuggestionVerdict,
+  SentryTokenEncryption,
   Thread,
   ThreadId,
 } from './types.js';

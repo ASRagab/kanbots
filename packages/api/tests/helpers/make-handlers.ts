@@ -67,8 +67,42 @@ export function makeHandlerTestKit(
     listActive: () => [],
     stopAllForShutdown: async () => {},
   };
+  const analyzeSentryError = async () => ({
+    verdict: 'task' as const,
+    confidence: 'medium' as const,
+    category: 'bug' as const,
+    reasoning: 'stub',
+    suggestedTitle: 'stub title',
+    suggestedBody: 'stub body',
+  });
+  const sentry = {
+    encryptToken: (plaintext: string) => ({
+      buffer: Buffer.from(plaintext, 'utf8'),
+      encryption: 'plain' as const,
+    }),
+    decryptToken: (buffer: Buffer | null) => (buffer ? buffer.toString('utf8') : null),
+    envTokenOverride: () => null,
+    safeStorageAvailable: () => false,
+    syncNow: async () => ({
+      imported: 0,
+      updated: 0,
+      totalSeen: 0,
+      lastSyncedAt: new Date().toISOString(),
+    }),
+    restartPoller: () => {},
+  };
   const handlers = createHandlers({
-    deps: { source, store, config, supervisor, draftIssue, suggestIssue, autopilot },
+    deps: {
+      source,
+      store,
+      config,
+      supervisor,
+      draftIssue,
+      suggestIssue,
+      autopilot,
+      analyzeSentryError,
+      sentry,
+    },
     subscriptions: registry,
   });
   return { source, store, supervisor, registry, config, handlers, draftIssue };

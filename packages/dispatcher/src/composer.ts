@@ -10,9 +10,20 @@ export interface DraftedIssue {
   body: string;
 }
 
+export type SuggestionEntryStatus =
+  | 'backlog'
+  | 'todo'
+  | 'in-progress'
+  | 'in-review'
+  | 'done'
+  | 'closed'
+  | 'unlabeled';
+
 export interface BacklogEntry {
   title: string;
   body?: string;
+  status?: SuggestionEntryStatus;
+  number?: number;
 }
 
 export interface SuggestFeatureInput {
@@ -72,14 +83,22 @@ function buildSuggestSystemPrompt(personaPrompt: string): string {
       : 'You are a product strategist for a software project.';
   return `${persona}
 
-Look at the repo (use Read/Glob/Grep — start with README.md, package.json, and top-level source dirs) and the backlog the user supplies. Propose ONE concrete next feature or task that fits this project's direction and the perspective described above. Aim for a useful suggestion within a few tool calls — do not exhaustively map the codebase.
+Look at the repo (use Read/Glob/Grep — start with README.md, package.json, and top-level source dirs) and the issue context the user supplies. Propose ONE concrete next feature or task that fits this project's direction and the perspective described above. Aim for a useful suggestion within a few tool calls — do not exhaustively map the codebase.
+
+The user-supplied context lists existing issues grouped by status (backlog, todo, in-progress, in-review, done, recently closed). Treat all of these as "already covered" — do not repropose anything similar to an issue in any group, including those already shipped or in flight.
+
+Before finalizing your proposal, you MUST verify in the workspace that the feature does not already exist:
+1. Search for keywords from your candidate title/description with Grep across source dirs.
+2. Glob for likely file or module names that would implement it.
+3. Read any matches you find to confirm whether the capability is genuinely missing or merely incomplete.
+If the candidate already exists in the workspace OR overlaps meaningfully with any item in the supplied issue context, pick a different proposal. Loop until you find something that is genuinely new.
 
 Rules:
 - Apply your perspective specifically. The suggestion should clearly reflect what someone in your role would prioritize and why.
-- Pick something the project does not already have and is not already in the backlog. Read the backlog carefully so you don't duplicate.
+- Pick something the project does not already have and is not represented in the supplied issue context.
 - Prefer small/medium scope: something a single agent can ship as one PR.
 - Title: concise, imperative, ≤80 chars, no trailing punctuation.
-- Body: markdown. Explain motivation (framed from your perspective), proposed approach grounded in real files/symbols you've seen, and 2-4 acceptance criteria. Reference paths when you can.
+- Body: markdown. Explain motivation (framed from your perspective), proposed approach grounded in real files/symbols you've seen, and 2-4 acceptance criteria. Reference paths when you can. Briefly note what you searched for to confirm the feature is missing (one short sentence is fine).
 - Do NOT invent files, modules, or capabilities you have not verified by reading the code. If something is uncertain, say so and let the implementer figure it out rather than guessing.
 - Output strictly the JSON object matching the schema.
 `;
@@ -234,18 +253,48 @@ export function createSuggester(opts: CreateSuggesterOptions): SuggestFeatureFn 
   };
 }
 
+const STATUS_GROUP_ORDER: ReadonlyArray<{
+  status: SuggestionEntryStatus;
+  heading: string;
+}> = [
+  { status: 'in-progress', heading: 'In progress (do not duplicate)' },
+  { status: 'in-review', heading: 'In review (do not duplicate)' },
+  { status: 'todo', heading: 'Up next / todo (do not duplicate)' },
+  { status: 'backlog', heading: 'Backlog (do not duplicate)' },
+  { status: 'done', heading: 'Done — already shipped or finished (do not propose anything similar)' },
+  { status: 'closed', heading: 'Recently closed (do not propose anything similar)' },
+  { status: 'unlabeled', heading: 'Other open issues (do not duplicate)' },
+];
+
+function renderEntry(item: BacklogEntry, idx: number): string {
+  const trimmedBody = (item.body ?? '').trim();
+  const summary = trimmedBody.length > 280 ? `${trimmedBody.slice(0, 280)}…` : trimmedBody;
+  const ref = item.number !== undefined ? `#${item.number} ` : '';
+  return summary
+    ? `${idx + 1}. ${ref}${item.title}\n   ${summary.replace(/\n/g, ' ')}`
+    : `${idx + 1}. ${ref}${item.title}`;
+}
+
 function formatBacklogPrompt(backlog: BacklogEntry[]): string {
   if (backlog.length === 0) {
-    return 'The backlog is currently empty. Suggest a strong first task for this project.';
+    return 'The repo currently has no tracked issues. Suggest a strong first task for this project.';
   }
-  const lines = backlog.map((item, idx) => {
-    const trimmedBody = (item.body ?? '').trim();
-    const summary = trimmedBody.length > 280 ? `${trimmedBody.slice(0, 280)}…` : trimmedBody;
-    return summary
-      ? `${idx + 1}. ${item.title}\n   ${summary.replace(/\n/g, ' ')}`
-      : `${idx + 1}. ${item.title}`;
-  });
-  return `Existing backlog (do not duplicate any of these):\n\n${lines.join('\n')}\n\nSuggest one new feature or task that fits this project.`;
+
+  const sections: string[] = [];
+  for (const { status, heading } of STATUS_GROUP_ORDER) {
+    const entries = backlog.filter((item) => (item.status ?? 'backlog') === status);
+    if (entries.length === 0) continue;
+    const lines = entries.map((entry, idx) => renderEntry(entry, idx));
+    sections.push(`### ${heading}\n${lines.join('\n')}`);
+  }
+
+  if (sections.length === 0) {
+    // No entries had recognizable statuses — fall back to a flat list.
+    const flat = backlog.map((entry, idx) => renderEntry(entry, idx)).join('\n');
+    return `Existing issues (do not duplicate any of these):\n\n${flat}\n\nSuggest one new feature or task that fits this project.`;
+  }
+
+  return `Existing issues, grouped by status. Do not duplicate or propose anything materially similar to anything below — including items that are already in flight or have already shipped.\n\n${sections.join('\n\n')}\n\nAfter you have a candidate, verify in the workspace that the feature is genuinely missing (Grep/Glob/Read). Then suggest ONE new feature or task.`;
 }
 
 function parseJsonOrThrow(stdout: string, stderr: string): unknown {

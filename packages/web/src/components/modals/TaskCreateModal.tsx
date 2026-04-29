@@ -219,6 +219,7 @@ export function TaskCreateModal({
               previewState: null,
             }
           : null,
+      sentryMeta: null,
     }),
     [title, body, tag, priority, mode, assignee, model, branchName],
   );

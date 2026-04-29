@@ -8,11 +8,19 @@ export interface AutopilotLaunchModalProps {
 }
 
 type Tab = 'feature-dev' | 'qa';
+type Model = 'opus' | 'sonnet' | 'haiku';
+type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+type Parallelism = 1 | 2 | 3 | 4;
+
+const PARALLELISM_OPTIONS: Parallelism[] = [1, 2, 3, 4];
 
 export function AutopilotLaunchModal({ onClose, onStarted }: AutopilotLaunchModalProps) {
   const [tab, setTab] = useState<Tab>('feature-dev');
   const [personas, setPersonas] = useState<Persona[]>(() => listPersonas());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [model, setModel] = useState<Model>('opus');
+  const [effort, setEffort] = useState<Effort>('medium');
+  const [parallelism, setParallelism] = useState<Parallelism>(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,6 +61,9 @@ export function AutopilotLaunchModal({ onClose, onStarted }: AutopilotLaunchModa
         config: {
           kind: 'feature-dev',
           personas: selected.map((p) => ({ id: p.id, name: p.name, prompt: p.prompt })),
+          model,
+          effort,
+          parallelism,
         },
       });
       onStarted?.(result);
@@ -115,6 +126,12 @@ export function AutopilotLaunchModal({ onClose, onStarted }: AutopilotLaunchModa
                 selectedIds={selectedIds}
                 onToggle={toggle}
                 onPersonasChanged={refreshPersonas}
+                model={model}
+                onModelChange={setModel}
+                effort={effort}
+                onEffortChange={setEffort}
+                parallelism={parallelism}
+                onParallelismChange={setParallelism}
               />
             ) : (
               <QaComingSoon />
@@ -127,7 +144,7 @@ export function AutopilotLaunchModal({ onClose, onStarted }: AutopilotLaunchModa
             <span className="hint">
               {selected.length === 0
                 ? 'Pick one or more personas.'
-                : `Round-robin across ${selected.length} persona${selected.length === 1 ? '' : 's'}. The loop runs until you stop it.`}
+                : `Round-robin across ${selected.length} persona${selected.length === 1 ? '' : 's'} · ${parallelism} in parallel · ${effort} effort · ${model}. Runs until you stop it.`}
             </span>
           ) : null}
           <span className="grow" />
@@ -166,17 +183,76 @@ function FeatureDevTab({
   selectedIds,
   onToggle,
   onPersonasChanged,
+  model,
+  onModelChange,
+  effort,
+  onEffortChange,
+  parallelism,
+  onParallelismChange,
 }: {
   personas: Persona[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onPersonasChanged: () => void;
+  model: Model;
+  onModelChange: (m: Model) => void;
+  effort: Effort;
+  onEffortChange: (e: Effort) => void;
+  parallelism: Parallelism;
+  onParallelismChange: (p: Parallelism) => void;
 }) {
   return (
     <>
       <div style={{ color: 'var(--ink-2)', fontSize: 12.5, marginBottom: 12 }}>
         Pick one or more personas. The autopilot will cycle through them in order, ideating and shipping
-        one feature at a time, until you stop it.
+        features until you stop it.
+      </div>
+      <div
+        style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}
+      >
+        <label className="kb-pill-select">
+          <span className="lbl">model</span>
+          <select
+            value={model}
+            onChange={(e) => onModelChange(e.target.value as Model)}
+            className="kb-pill-select-native mono"
+          >
+            <option value="opus">opus</option>
+            <option value="sonnet">sonnet</option>
+            <option value="haiku">haiku</option>
+          </select>
+          <span className="caret">▾</span>
+        </label>
+        <label className="kb-pill-select">
+          <span className="lbl">effort</span>
+          <select
+            value={effort}
+            onChange={(e) => onEffortChange(e.target.value as Effort)}
+            className="kb-pill-select-native mono"
+          >
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
+          <span className="caret">▾</span>
+        </label>
+        <label className="kb-pill-select" title="How many child tasks run at once">
+          <span className="lbl">parallel</span>
+          <select
+            value={parallelism}
+            onChange={(e) => onParallelismChange(Number(e.target.value) as Parallelism)}
+            className="kb-pill-select-native mono"
+          >
+            {PARALLELISM_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span className="caret">▾</span>
+        </label>
       </div>
       <div className="kb-persona-grid">
         {personas.map((p) => {

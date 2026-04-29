@@ -165,6 +165,74 @@
   font-family: var(--ff-mono);
 }
 
+/* Cost usage row — sits below the filter row, mirrors claude-code's
+   "Target: tokens / budget (pct%)" indicator with a progress bar. */
+.kb-usage-row {
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--hairline-soft);
+  background: var(--bg);
+  font-family: var(--ff-mono);
+  font-size: 11px;
+}
+.kb-usage-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+}
+.kb-usage-label {
+  color: var(--ink-2);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.kb-usage-bar {
+  position: relative;
+  width: 96px;
+  height: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--hairline-soft);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.kb-usage-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 999px 0 0 999px;
+  transition: width 240ms ease;
+}
+.kb-usage-meter.tone-warn .kb-usage-bar-fill {
+  background: var(--awaiting);
+}
+.kb-usage-meter.tone-danger .kb-usage-bar-fill {
+  background: var(--failed);
+}
+.kb-usage-pct {
+  color: var(--ink-2);
+  min-width: 4ch;
+  text-align: right;
+}
+.kb-usage-meter.tone-warn .kb-usage-pct {
+  color: var(--awaiting);
+}
+.kb-usage-meter.tone-danger .kb-usage-pct {
+  color: var(--failed);
+}
+.kb-usage-reset {
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 /* ---------- Board grid ---------- */
 .kb-board {
   flex: 1;
@@ -786,4 +854,25 @@
   height: 24px;
   padding: 0 9px;
   font-size: 11px;
+}
+
+/* Sentry origin badge on cards */
+.kb-sentry-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(249, 115, 22, 0.15);
+  color: #c2410c;
+  text-transform: uppercase;
+}
+.kb-sentry-badge.kb-sentry-analyzed {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+}
+.kb-sentry-badge.kb-sentry-applied,
+.kb-sentry-badge.kb-sentry-upstream_resolved {
+  background: rgba(21, 128, 61, 0.15);
+  color: #15803d;
 }

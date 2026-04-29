@@ -136,10 +136,15 @@ export interface AutopilotCheckCommand {
   args: string[];
 }
 
+export type AutopilotEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export type AutopilotConfig =
   | {
       kind: 'feature-dev';
       personas: AutopilotPersonaSnapshot[];
+      model?: string;
+      effort?: AutopilotEffort;
+      parallelism?: number;
     }
   | {
       kind: 'qa';
@@ -172,4 +177,50 @@ export interface AutopilotSession {
   cycleIndex: number;
   currentChildRunId: number | null;
   children: AutopilotChildEntry[];
+}
+
+export type SentryTokenEncryption = 'safe' | 'plain';
+
+export interface SentryConfig {
+  enabled: boolean;
+  orgSlug: string | null;
+  projectSlug: string | null;
+  tokenEncrypted: Buffer | null;
+  tokenEncryption: SentryTokenEncryption;
+  pollIntervalSeconds: number;
+  environmentFilter: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  consecutiveAuthFailures: number;
+}
+
+export type SentryImportStatus = 'imported' | 'analyzed' | 'applied' | 'upstream_resolved';
+
+export type SentrySuggestionVerdict = 'task' | 'skip';
+export type SentrySuggestionConfidence = 'high' | 'medium' | 'low';
+export type SentrySuggestionCategory = 'bug' | 'config' | 'flake' | 'noise';
+
+export interface SentrySuggestion {
+  verdict: SentrySuggestionVerdict;
+  confidence: SentrySuggestionConfidence;
+  category: SentrySuggestionCategory;
+  reasoning: string;
+  suggestedTitle: string;
+  suggestedBody: string;
+}
+
+export interface SentryImport {
+  sentryIssueId: string;
+  localIssueNumber: number;
+  status: SentryImportStatus;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastEventId: string | null;
+  permalink: string | null;
+  culprit: string | null;
+  errorType: string | null;
+  errorValue: string | null;
+  analyzedAt: string | null;
+  suggestion: SentrySuggestion | null;
 }

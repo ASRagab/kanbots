@@ -107,6 +107,18 @@ export async function archive(
   args: NumberArgs,
 ): Promise<DecoratedIssue> {
   const parsed = parseArgs(issueNumberSchema, args);
+  const issue = await deps.source.getIssue(parsed.number);
+
+  // If this is an autopilot parent, stop its session so the orchestrator loop
+  // exits cleanly before we close the issue. Children are left as-is — the
+  // user can archive them individually if desired.
+  if (issue.labels.includes('type:autopilot')) {
+    const session = deps.autopilot.getSessionByIssue(parsed.number);
+    if (session && session.status === 'running') {
+      await deps.autopilot.stop(session.id, { stopChildren: false });
+    }
+  }
+
   const thread = findThreadForIssue(deps.store, parsed.number);
   if (thread) {
     const runs = deps.store.agentRuns
@@ -121,7 +133,6 @@ export async function archive(
       await deps.supervisor.stop(run.id);
     }
   }
-  const issue = await deps.source.getIssue(parsed.number);
   const labels = issue.labels.filter(
     (l) =>
       !l.startsWith('status:') && !l.startsWith('agent:') && l !== 'archived',
@@ -130,6 +141,25 @@ export async function archive(
   const updated = await deps.source.updateIssue(parsed.number, {
     labels,
     state: 'closed',
+  });
+  return decorateIssue(updated);
+}
+
+export async function unarchive(
+  deps: HandlerDeps,
+  args: NumberArgs,
+): Promise<DecoratedIssue> {
+  const parsed = parseArgs(issueNumberSchema, args);
+  const issue = await deps.source.getIssue(parsed.number);
+  // Drop the 'archived' marker, keep all other labels, and restore a sensible
+  // status so the card appears on the board instead of falling into Inbox.
+  const stripped = issue.labels.filter(
+    (l) => l !== 'archived' && !l.startsWith('status:'),
+  );
+  const labels = [...stripped, 'status:backlog'];
+  const updated = await deps.source.updateIssue(parsed.number, {
+    labels,
+    state: 'open',
   });
   return decorateIssue(updated);
 }

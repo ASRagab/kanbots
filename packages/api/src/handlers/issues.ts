@@ -15,8 +15,10 @@ import type {
   IssueActiveRunPayload,
   IssueDetail,
   PostMessageResult,
+  SentryMetaPayload,
   ThreadPayload,
 } from '../bridge.js';
+import { sweepAllRunsForThread } from './agent-runs.js';
 import { alreadyActive, badRequest, parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
 
@@ -142,8 +144,34 @@ export async function list(
     parsed.state ? { state: parsed.state } : {},
   );
   const activeRunMap = buildActiveRunMap(deps);
+  const sentryMap = buildSentryMetaMap(deps);
   return issues.map((issue) =>
-    decorateIssue(issue, activeRunMap.get(issue.number) ?? null),
+    decorateIssue(
+      issue,
+      activeRunMap.get(issue.number) ?? null,
+      sentryMap.get(issue.number) ?? null,
+    ),
+  );
+}
+
+export async function listArchived(
+  deps: HandlerDeps,
+): Promise<DecoratedIssue[]> {
+  // Archived = closed issue carrying the 'archived' label. We pull the closed
+  // set from the source and filter client-side so the same filter works for
+  // both the local store and GitHub.
+  const issues = await deps.source.listIssues({ state: 'closed' });
+  const archived = issues.filter((i) => i.labels.includes('archived'));
+  // Most-recently archived first. We don't track an explicit archive timestamp
+  // (the action piggy-backs on issue close), so updatedAt is the best proxy.
+  archived.sort((a, b) => {
+    const at = new Date(a.updatedAt).getTime();
+    const bt = new Date(b.updatedAt).getTime();
+    return bt - at;
+  });
+  const sentryMap = buildSentryMetaMap(deps);
+  return archived.map((issue) =>
+    decorateIssue(issue, null, sentryMap.get(issue.number) ?? null),
   );
 }
 
@@ -163,8 +191,13 @@ export async function get(
   );
   const threadPayload = thread ? buildThreadPayload(deps, thread.id) : null;
   const activeRunMap = buildActiveRunMap(deps);
+  const sentryMeta = lookupSentryMeta(deps, parsed.number);
   return {
-    issue: decorateIssue(issue, activeRunMap.get(parsed.number) ?? null),
+    issue: decorateIssue(
+      issue,
+      activeRunMap.get(parsed.number) ?? null,
+      sentryMeta,
+    ),
     comments,
     thread: threadPayload,
   };
@@ -200,7 +233,21 @@ export async function patch(
       : {}),
   };
   const issue = await deps.source.updateIssue(parsed.number, updates);
-  return decorateIssue(issue);
+  const sentryMeta = lookupSentryMeta(deps, parsed.number);
+  const decorated = decorateIssue(issue, null, sentryMeta);
+  if (decorated.status === 'done') {
+    // The user has explicitly signalled they're done with this card, so always
+    // remove the run worktrees from disk. Branches with unmerged commits are
+    // preserved (sweepAllRunsForThread handles the keep-vs-delete decision)
+    // so the agent's work isn't silently destroyed.
+    const thread = deps.store.threads.findByIssue(
+      deps.config.owner,
+      deps.config.repo,
+      parsed.number,
+    );
+    if (thread) await sweepAllRunsForThread(deps, thread.id);
+  }
+  return decorated;
 }
 
 export async function addComment(
@@ -350,12 +397,58 @@ export async function dispatch(
 export function decorateIssue(
   issue: Issue,
   activeRun: IssueActiveRunPayload | null = null,
+  sentryMeta: SentryMetaPayload | null = null,
 ): DecoratedIssue {
   return {
     ...issue,
     status: statusFromLabels(issue.labels),
     agent: agentFromLabels(issue.labels),
     activeRun,
+    sentryMeta,
+  };
+}
+
+export function buildSentryMetaMap(deps: HandlerDeps): Map<number, SentryMetaPayload> {
+  const out = new Map<number, SentryMetaPayload>();
+  for (const [number, row] of deps.store.sentryImports.mapByLocalNumber()) {
+    out.set(number, sentryImportToPayload(row));
+  }
+  return out;
+}
+
+export function lookupSentryMeta(
+  deps: HandlerDeps,
+  issueNumber: number,
+): SentryMetaPayload | null {
+  const row = deps.store.sentryImports.findByLocalNumber(issueNumber);
+  return row ? sentryImportToPayload(row) : null;
+}
+
+function sentryImportToPayload(row: {
+  sentryIssueId: string;
+  status: 'imported' | 'analyzed' | 'applied' | 'upstream_resolved';
+  count: number;
+  permalink: string | null;
+  culprit: string | null;
+  errorType: string | null;
+  errorValue: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  analyzedAt: string | null;
+  suggestion: SentryMetaPayload['suggestion'];
+}): SentryMetaPayload {
+  return {
+    sentryIssueId: row.sentryIssueId,
+    status: row.status,
+    count: row.count,
+    permalink: row.permalink,
+    culprit: row.culprit,
+    errorType: row.errorType,
+    errorValue: row.errorValue,
+    firstSeenAt: row.firstSeenAt,
+    lastSeenAt: row.lastSeenAt,
+    analyzedAt: row.analyzedAt,
+    suggestion: row.suggestion,
   };
 }
 

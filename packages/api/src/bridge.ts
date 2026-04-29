@@ -9,6 +9,7 @@ import type {
   AutopilotChildKind,
   AutopilotChildStatus,
   AutopilotConfig,
+  AutopilotEffort,
   AutopilotKind,
   AutopilotPersonaSnapshot,
   AutopilotSession,
@@ -20,6 +21,11 @@ import type {
   Message,
   PreviewState,
   Role,
+  SentryImportStatus,
+  SentrySuggestion,
+  SentrySuggestionCategory,
+  SentrySuggestionConfidence,
+  SentrySuggestionVerdict,
 } from '@kanbots/local-store';
 import type {
   AgentKey,
@@ -42,6 +48,7 @@ export type {
   AutopilotChildKind,
   AutopilotChildStatus,
   AutopilotConfig,
+  AutopilotEffort,
   AutopilotKind,
   AutopilotPersonaSnapshot,
   AutopilotSession,
@@ -59,6 +66,11 @@ export type {
   Issue,
   StatusKey,
   UpdateIssuePatch,
+  SentryImportStatus,
+  SentrySuggestion,
+  SentrySuggestionCategory,
+  SentrySuggestionConfidence,
+  SentrySuggestionVerdict,
 };
 
 export interface DecisionPayload {
@@ -85,9 +97,20 @@ export interface DraftedIssue {
 
 export type DraftIssueFn = (input: DraftIssueInput) => Promise<DraftedIssue>;
 
+export type SuggestFeatureEntryStatus =
+  | 'backlog'
+  | 'todo'
+  | 'in-progress'
+  | 'in-review'
+  | 'done'
+  | 'closed'
+  | 'unlabeled';
+
 export interface SuggestFeatureBacklogEntry {
   title: string;
   body?: string;
+  status?: SuggestFeatureEntryStatus;
+  number?: number;
 }
 
 export interface SuggestFeatureInput {
@@ -96,6 +119,81 @@ export interface SuggestFeatureInput {
 }
 
 export type SuggestFeatureFn = (input: SuggestFeatureInput) => Promise<DraftedIssue>;
+
+export interface SentryAnalyzerInput {
+  errorType: string | null;
+  errorValue: string | null;
+  culprit: string | null;
+  permalink: string | null;
+  environment: string | null;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+  stackFrames: Array<{
+    filename: string | null;
+    function: string | null;
+    lineno: number | null;
+    inApp: boolean;
+    contextLine: string | null;
+  }>;
+  breadcrumbs: Array<{
+    timestamp: string | null;
+    category: string | null;
+    level: string | null;
+    message: string | null;
+  }>;
+}
+
+export type SentryAnalyzerFn = (input: SentryAnalyzerInput) => Promise<SentrySuggestion>;
+
+export interface SentryConfigPayload {
+  enabled: boolean;
+  orgSlug: string | null;
+  projectSlug: string | null;
+  hasToken: boolean;
+  tokenEncryption: 'safe' | 'plain';
+  safeStorageAvailable: boolean;
+  pollIntervalSeconds: number;
+  environmentFilter: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  consecutiveAuthFailures: number;
+}
+
+export interface SentryConfigInput {
+  enabled?: boolean;
+  orgSlug?: string | null;
+  projectSlug?: string | null;
+  token?: string | null;
+  pollIntervalSeconds?: number;
+  environmentFilter?: string | null;
+}
+
+export interface SentryTestConnectionResult {
+  ok: true;
+  project: { slug: string; name: string };
+}
+
+export interface SentrySyncResult {
+  imported: number;
+  updated: number;
+  totalSeen: number;
+  lastSyncedAt: string;
+}
+
+export interface SentryMetaPayload {
+  sentryIssueId: string;
+  status: SentryImportStatus;
+  count: number;
+  permalink: string | null;
+  culprit: string | null;
+  errorType: string | null;
+  errorValue: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  analyzedAt: string | null;
+  suggestion: SentrySuggestion | null;
+}
 
 export interface IssueActiveRunPayload {
   id: number;
@@ -128,6 +226,7 @@ export interface DecoratedIssue extends Issue {
   status: StatusKey | null;
   agent: AgentKey | null;
   activeRun: IssueActiveRunPayload | null;
+  sentryMeta: SentryMetaPayload | null;
 }
 
 export interface ThreadPayload {
@@ -206,6 +305,23 @@ export interface CostTodayResult {
   since: string;
 }
 
+// Same shape Claude Code's `statusLine` JSON exposes under
+// `rate_limits.{five_hour,seven_day}.used_percentage`. Sourced from the
+// authenticated OAuth `/usage` endpoint so the values match claude.ai's
+// "Plan usage limits" panel exactly.
+export interface CostUsageWindow {
+  pct: number; // 0..1 utilization
+  resetsAt: string | null; // ISO date or null when unknown
+}
+
+export interface CostUsageResult {
+  fiveHour: CostUsageWindow | null;
+  sevenDay: CostUsageWindow | null;
+  // 'oauth' = live numbers, 'unauthorized' = token expired (relog required),
+  // 'unavailable' = creds missing or endpoint down.
+  source: 'oauth' | 'unauthorized' | 'unavailable';
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -278,6 +394,7 @@ export interface BridgeChannels {
     args: { state?: 'open' | 'closed' | 'all' };
     result: DecoratedIssue[];
   };
+  'issues:list-archived': { args: void; result: DecoratedIssue[] };
   'issues:get': { args: { number: number }; result: IssueDetail };
   'issues:create': { args: CreateIssueInput; result: DecoratedIssue };
   'issues:patch': {
@@ -314,6 +431,7 @@ export interface BridgeChannels {
     result: AgentRun;
   };
   'issues:archive': { args: { number: number }; result: DecoratedIssue };
+  'issues:unarchive': { args: { number: number }; result: DecoratedIssue };
   'issues:approve': { args: { number: number }; result: DecoratedIssue };
   'issues:request-changes': { args: { number: number }; result: DecoratedIssue };
   'issues:split': {
@@ -376,6 +494,7 @@ export interface BridgeChannels {
   };
   'decisions:pending': { args: void; result: PendingDecisionPayload[] };
   'cost:today': { args: void; result: CostTodayResult };
+  'cost:usage': { args: void; result: CostUsageResult };
   'workspace:get': { args: void; result: Workspace };
   'folders:list': { args: void; result: WorkspaceFolderPayload[] };
   'folders:add': {
@@ -404,6 +523,24 @@ export interface BridgeChannels {
   'autopilot:get-by-issue': {
     args: { issueNumber: number };
     result: AutopilotSession | null;
+  };
+  'sentry:get-config': { args: void; result: SentryConfigPayload };
+  'sentry:save-config': {
+    args: SentryConfigInput;
+    result: SentryConfigPayload;
+  };
+  'sentry:test-connection': {
+    args: { token?: string; orgSlug?: string; projectSlug?: string };
+    result: SentryTestConnectionResult;
+  };
+  'sentry:sync-now': { args: void; result: SentrySyncResult };
+  'sentry:analyze': {
+    args: { issueNumber: number };
+    result: SentrySuggestion;
+  };
+  'sentry:apply-suggestion': {
+    args: { issueNumber: number };
+    result: DecoratedIssue;
   };
 }
 

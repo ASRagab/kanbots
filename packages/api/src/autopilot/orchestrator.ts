@@ -164,8 +164,6 @@ export function createAutopilotManager(opts: AutopilotManagerOpts): AutopilotMan
     if (!existing) throw new Error(`autopilot session ${sessionId} not found`);
     if (existing.status !== 'running') return existing;
 
-    const childRunId = existing.currentChildRunId;
-
     const updated = store.autopilotSessions.update(sessionId, {
       stopReason: opts2.stopChildren
         ? 'stopped by user (children cancelled)'
@@ -176,12 +174,13 @@ export function createAutopilotManager(opts: AutopilotManagerOpts): AutopilotMan
     const loop = active.get(sessionId);
     if (loop) loop.controller.abort();
 
-    if (opts2.stopChildren && childRunId !== null) {
-      try {
-        await supervisor.stop(childRunId);
-      } catch {
-        // best-effort
-      }
+    if (opts2.stopChildren) {
+      // With parallelism > 1, multiple children may be in flight — stop all of
+      // them rather than just the most recently started one.
+      const activeChildIds = existing.children
+        .filter((c) => c.status === 'running' && c.runId !== null)
+        .map((c) => c.runId as number);
+      await Promise.allSettled(activeChildIds.map((id) => supervisor.stop(id)));
     }
 
     if (loop) {
@@ -353,6 +352,9 @@ function renderConfigBody(kind: AutopilotKind, config: AutopilotConfig): string 
   lines.push('');
   lines.push(`**Mode:** ${kind}`);
   if (kind === 'feature-dev' && config.kind === 'feature-dev') {
+    lines.push(`**Model:** ${config.model ?? 'default'}`);
+    lines.push(`**Effort:** ${config.effort ?? 'medium'}`);
+    lines.push(`**Parallelism:** ${config.parallelism ?? 1}`);
     lines.push('**Personas (round-robin):**');
     for (const p of config.personas) {
       lines.push(`- ${p.name}`);

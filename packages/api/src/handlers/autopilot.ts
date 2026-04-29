@@ -19,10 +19,15 @@ const checkCommandSchema = z
   })
   .strict();
 
+const effortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+
 const featureDevConfigSchema = z
   .object({
     kind: z.literal('feature-dev'),
     personas: z.array(personaSnapshotSchema).min(1).max(20),
+    model: z.string().min(1).max(120).optional(),
+    effort: effortSchema.optional(),
+    parallelism: z.number().int().min(1).max(4).optional(),
   })
   .strict();
 

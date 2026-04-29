@@ -13,7 +13,18 @@ export {
   type SpawnFn,
   type SuggestFeatureFn,
   type SuggestFeatureInput,
+  type SuggestionEntryStatus,
 } from './composer.js';
+
+export {
+  createSentryAnalyzer,
+  type CreateSentryAnalyzerOptions,
+  type SentryAnalyzerBreadcrumb,
+  type SentryAnalyzerFn,
+  type SentryAnalyzerInput,
+  type SentryAnalyzerStackFrame,
+  type SentryAnalyzerSuggestion,
+} from './sentry-analyzer.js';
 
 export { parseStreamLine, makeLineSplitter, type StreamEvent } from './stream-parser.js';
 

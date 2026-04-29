@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type RefObject,
+} from 'react';
 import { api } from '../../api.js';
 import { useFetch } from '../../hooks/useFetch.js';
 import {
@@ -14,9 +21,12 @@ import {
   linkedIssueNumbers,
   priorityFromLabels,
   tagFromLabels,
+  withStatus,
 } from '../../labels.js';
+import { AgentSpinner } from '../run/AgentSpinner.js';
 import { PreviewPanel } from '../run/PreviewPanel.js';
 import { RunSummary } from '../run/RunSummary.js';
+import { ToolUseCard } from '../run/ToolUseCard.js';
 import type {
   AgentEvent,
   AgentRun,
@@ -29,6 +39,8 @@ import type {
   DiffPayload,
   IssueDetail as IssueDetailPayload,
   Message,
+  SentrySuggestion,
+  StatusKey,
 } from '../../types.js';
 
 const TAB_LABELS: Record<DetailTab, string> = {
@@ -77,6 +89,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
     () => api.issue(issueNumber),
   );
   const isAutopilot = (data?.issue?.labels ?? []).includes('type:autopilot');
+  const isArchived = (data?.issue?.labels ?? []).includes('archived');
   const [tab, setTab] = useState<DetailTab>(isAutopilot ? 'autopilot' : 'overview');
   useEffect(() => {
     if (isAutopilot && tab !== 'autopilot' && tab !== 'thread') {
@@ -146,7 +159,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
           <span className="num">#{issueNumber}</span>
           <h2>{issue?.title ?? (loading ? 'Loading…' : 'Issue')}</h2>
           <span className="grow" />
-          {isAutopilot ? (
+          {isAutopilot && !isArchived ? (
             <AutopilotStopButton issueNumber={issueNumber} onAfter={() => void refetch()} />
           ) : null}
           {!isAutopilot && activeRun && isRunning ? (
@@ -168,14 +181,30 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
               Open preview ↗
             </button>
           ) : null}
-          {!isAutopilot ? (
+          {isArchived ? (
             <button
               type="button"
               className="kb-btn ghost"
               onClick={() => {
-                const msg = isRunning
-                  ? 'Archive this ticket? Its running agent will be stopped.'
-                  : 'Archive this ticket?';
+                void api.unarchiveIssue(issueNumber).then(() => {
+                  dispatchIssuesRefetch();
+                  onClose();
+                });
+              }}
+              title="Restore this task to the board"
+            >
+              Unarchive
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="kb-btn ghost"
+              onClick={() => {
+                const msg = isAutopilot
+                  ? 'Archive this autopilot task? Its session will be stopped. Child tasks remain.'
+                  : isRunning
+                    ? 'Archive this ticket? Its running agent will be stopped.'
+                    : 'Archive this ticket?';
                 if (!window.confirm(msg)) return;
                 void api.archiveIssue(issueNumber).then(() => {
                   dispatchIssuesRefetch();
@@ -185,7 +214,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
             >
               Archive
             </button>
-          ) : null}
+          )}
           <button
             type="button"
             className="x-btn"
@@ -288,6 +317,8 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                       displayRun={displayRun}
                       messages={messages}
                       issueNumber={issueNumber}
+                      issueLabels={issue.labels}
+                      issueStatus={issue.status}
                       onActionDone={() => void refetch()}
                     />
                   ) : null}
@@ -542,11 +573,14 @@ function OverviewTab({
 }) {
   const stream = useAgentRunStream(displayRun?.id ?? null);
   const recentToolCalls = stream.events.filter((e) => e.type === 'tool_use').slice(-4).reverse();
+  const resultByToolUseId = buildResultIndex(stream.events);
   const acMatches = (issue.body ?? '').match(/(?:^|\n)\s*AC:\s*\n((?:[-*]\s.+\n?)+)/);
   const acItems = acMatches?.[1]?.match(/(?:^|\n)[-*]\s(.+)/g)?.map((l) => l.replace(/^[\s-*]+/, '')) ?? [];
 
   return (
     <>
+      {issue.sentryMeta ? <SentryAnalysisSection issue={issue} /> : null}
+
       <div className="kb-tdm-section">
         <h3>Description</h3>
         <div className="kb-desc-md">{issue.body || '(no description)'}</div>
@@ -580,23 +614,150 @@ function OverviewTab({
       {recentToolCalls.length > 0 ? (
         <div className="kb-tdm-section">
           <h3>What the agent did just now</h3>
-          {recentToolCalls.map((ev) => {
-            const p = ev.payload as { name?: string; input?: unknown };
-            return (
-              <div key={ev.id} className="kb-tcall">
-                <div className="kb-tcall-head">
-                  <span className="name">{p.name ?? 'tool'}</span>
-                  <span className="arg">
-                    {typeof p.input === 'string' ? p.input : JSON.stringify(p.input)}
-                  </span>
-                  <span className="dur">{ageString(ev.createdAt)} ago</span>
-                </div>
-              </div>
-            );
-          })}
+          {recentToolCalls.map((ev) => (
+            <ToolUseCard
+              key={ev.id}
+              toolUse={ev}
+              result={resultByToolUseId.get(toolUseIdOf(ev)) ?? null}
+              isLive={false}
+            />
+          ))}
         </div>
       ) : null}
     </>
+  );
+}
+
+function SentryAnalysisSection({ issue }: { issue: IssueDetailPayload['issue'] }) {
+  const meta = issue.sentryMeta;
+  const [suggestion, setSuggestion] = useState<SentrySuggestion | null>(meta?.suggestion ?? null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!meta) return null;
+
+  async function handleAnalyze(): Promise<void> {
+    if (analyzing) return;
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const result = await api.analyzeSentryIssue(issue.number);
+      setSuggestion(result);
+      dispatchIssuesRefetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function handleApply(): Promise<void> {
+    if (applying) return;
+    setApplying(true);
+    setError(null);
+    try {
+      await api.applySentrySuggestion(issue.number);
+      dispatchIssuesRefetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  return (
+    <div className="kb-tdm-section kb-sentry-section">
+      <h3>
+        Sentry{' '}
+        <span className="kb-sentry-section-status" data-status={meta.status}>
+          {meta.status === 'analyzed'
+            ? 'analyzed'
+            : meta.status === 'applied'
+              ? 'applied'
+              : meta.status === 'upstream_resolved'
+                ? 'upstream resolved'
+                : 'unreviewed'}
+        </span>
+      </h3>
+      <div className="kb-sentry-section-meta">
+        {meta.errorType ? (
+          <code>
+            {meta.errorType}: {meta.errorValue ?? ''}
+          </code>
+        ) : null}
+        <div className="kb-sentry-section-row">
+          <span>Occurrences: {meta.count}</span>
+          {meta.culprit ? <span>Where: {meta.culprit}</span> : null}
+          {meta.permalink ? (
+            <a href={meta.permalink} target="_blank" rel="noreferrer noopener">
+              View in Sentry ↗
+            </a>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? <div className="kb-sentry-error">{error}</div> : null}
+
+      {suggestion ? (
+        <div className="kb-sentry-suggestion">
+          <div className="kb-sentry-suggestion-head">
+            <span
+              className={`kb-sentry-verdict kb-sentry-verdict-${suggestion.verdict}`}
+              title={`Confidence: ${suggestion.confidence} · Category: ${suggestion.category}`}
+            >
+              {suggestion.verdict === 'task' ? 'Recommend converting to task' : 'Likely skippable'}
+            </span>
+            <span className="kb-sentry-confidence">
+              {suggestion.confidence} confidence · {suggestion.category}
+            </span>
+          </div>
+          <p className="kb-sentry-reasoning">{suggestion.reasoning}</p>
+          <div className="kb-sentry-suggestion-fields">
+            <div>
+              <strong>Suggested title:</strong> {suggestion.suggestedTitle}
+            </div>
+            <details>
+              <summary>Suggested body</summary>
+              <pre className="kb-sentry-body-preview">{suggestion.suggestedBody}</pre>
+            </details>
+          </div>
+          <div className="kb-sentry-suggestion-actions">
+            <button
+              type="button"
+              className="kb-btn primary"
+              onClick={() => void handleApply()}
+              disabled={applying || meta.status === 'applied'}
+            >
+              {meta.status === 'applied'
+                ? 'Applied'
+                : applying
+                  ? 'Applying…'
+                  : 'Convert to task'}
+            </button>
+            <button
+              type="button"
+              className="kb-btn ghost"
+              onClick={() => void handleAnalyze()}
+              disabled={analyzing}
+            >
+              {analyzing ? 'Re-analyzing…' : 'Re-analyze'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="kb-sentry-suggestion-actions">
+          <button
+            type="button"
+            className="kb-btn primary"
+            onClick={() => void handleAnalyze()}
+            disabled={analyzing}
+          >
+            {analyzing ? 'Analyzing…' : 'Analyze'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -609,12 +770,16 @@ function ThreadTab({
   displayRun,
   messages,
   issueNumber,
+  issueLabels,
+  issueStatus,
   onActionDone,
 }: {
   activeRun: AgentRun | null;
   displayRun: AgentRun | null;
   messages: Message[];
   issueNumber: number;
+  issueLabels: readonly string[];
+  issueStatus: StatusKey | null;
   onActionDone: () => void;
 }) {
   const stream = useAgentRunStream(displayRun?.id ?? null);
@@ -627,6 +792,10 @@ function ThreadTab({
     cardsByMessageId.set(c.messageId, arr);
   }
 
+  // Pair every tool_use with its tool_result (matched on toolUseId) so the
+  // ToolUseCard can render both halves inside one card.
+  const resultByToolUseId = buildResultIndex(stream.events);
+
   const items: TimelineItem[] = [];
   for (const m of messages) {
     items.push({
@@ -637,12 +806,9 @@ function ThreadTab({
       cards: cardsByMessageId.get(m.id) ?? [],
     });
   }
-  let latestTool: AgentEvent | null = null;
   for (const e of stream.events) {
-    if (e.type === 'tool_use') {
-      if (latestTool === null || e.seq > latestTool.seq) latestTool = e;
-      continue;
-    }
+    // tool_result events are folded into their tool_use parent.
+    if (e.type === 'tool_result') continue;
     items.push({ kind: 'event', sortKey: e.createdAt, id: `e${e.id}`, event: e });
   }
   items.sort((a, b) => {
@@ -650,12 +816,20 @@ function ThreadTab({
     return a.sortKey < b.sortKey ? -1 : 1;
   });
 
-  const lastLoggedKey = items.length > 0 ? items[items.length - 1]!.sortKey : '';
-  const showLatestTool = latestTool !== null && latestTool.createdAt > lastLoggedKey;
+  // Show the agent spinner whenever the run is still doing work — same
+  // status set the header pill considers "active".
+  const isRunning =
+    displayRun !== null &&
+    (displayRun.status === 'running' ||
+      displayRun.status === 'starting' ||
+      displayRun.status === 'awaiting_input');
 
-  if (items.length === 0 && !showLatestTool) {
+  const sectionRef = useRef<HTMLDivElement | null>(null);
+  useStickToBottom(sectionRef, [items.length, stream.events.length, isRunning]);
+
+  if (items.length === 0 && !isRunning) {
     return (
-      <div className="kb-tdm-section">
+      <div className="kb-tdm-section" ref={sectionRef}>
         <h3>Agent thread</h3>
         <div className="kb-desc-md" style={{ color: 'var(--ink-3)' }}>
           No agent activity yet. Reply below to start the conversation.
@@ -665,7 +839,7 @@ function ThreadTab({
   }
 
   return (
-    <div className="kb-tdm-section">
+    <div className="kb-tdm-section" ref={sectionRef}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
         <h3 style={{ margin: 0 }}>Agent thread</h3>
         {displayRun ? (
@@ -679,17 +853,30 @@ function ThreadTab({
         {items.map((it) =>
           it.kind === 'message' ? (
             <MessageRow key={it.id} message={it.message} cards={it.cards} />
+          ) : it.event.type === 'tool_use' ? (
+            <ToolUseCard
+              key={it.id}
+              toolUse={it.event}
+              result={resultByToolUseId.get(toolUseIdOf(it.event)) ?? null}
+              isLive={isLive}
+            />
           ) : (
-            <EventRow key={it.id} event={it.event} isLive={isLive} />
+            <EventRow key={it.id} event={it.event} />
           ),
         )}
-        {showLatestTool && latestTool ? (
-          <EventRow key="latest-tool" event={latestTool} isLive={isLive} />
+        {isRunning && displayRun ? (
+          <AgentSpinner
+            seed={displayRun.id}
+            startedAt={displayRun.startedAt}
+            tokensOut={displayRun.tokenUsageOutput ?? null}
+          />
         ) : null}
         {displayRun && displayRun.status === 'complete' ? (
           <CompletionActions
             runId={displayRun.id}
             issueNumber={issueNumber}
+            issueLabels={issueLabels}
+            issueStatus={issueStatus}
             onChanged={onActionDone}
           />
         ) : null}
@@ -698,18 +885,76 @@ function ThreadTab({
   );
 }
 
+// Pin the scroll container to the bottom while the user is already at (or
+// near) the bottom. If they scroll up, leave them alone until they scroll
+// back down within `threshold` px of the bottom.
+function useStickToBottom(
+  anchorRef: RefObject<HTMLElement | null>,
+  deps: ReadonlyArray<unknown>,
+  threshold = 80,
+): void {
+  const pinnedRef = useRef(true);
+  const scrollerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const scroller = el.closest('.kb-modal-main') as HTMLElement | null;
+    scrollerRef.current = scroller;
+    if (!scroller) return;
+    const onScroll = (): void => {
+      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      pinnedRef.current = distance <= threshold;
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onScroll);
+  }, [anchorRef, threshold]);
+
+  useEffect(() => {
+    if (!pinnedRef.current) return;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    // Wait for layout to settle (images, code blocks expanding, etc.).
+    const id = requestAnimationFrame(() => {
+      scroller.scrollTop = scroller.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+function buildResultIndex(events: AgentEvent[]): Map<string, AgentEvent> {
+  const idx = new Map<string, AgentEvent>();
+  for (const e of events) {
+    if (e.type !== 'tool_result') continue;
+    const id = (e.payload as { toolUseId?: unknown }).toolUseId;
+    if (typeof id === 'string') idx.set(id, e);
+  }
+  return idx;
+}
+
+function toolUseIdOf(ev: AgentEvent): string {
+  const id = (ev.payload as { toolUseId?: unknown }).toolUseId;
+  return typeof id === 'string' ? id : `seq:${ev.seq}`;
+}
+
 function CompletionActions({
   runId,
   issueNumber,
+  issueLabels,
+  issueStatus,
   onChanged,
 }: {
   runId: number;
   issueNumber: number;
+  issueLabels: readonly string[];
+  issueStatus: StatusKey | null;
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const alreadyDone = issueStatus === 'done';
 
   async function call<T>(
     name: string,
@@ -760,22 +1005,23 @@ function CompletionActions({
         <button
           type="button"
           className="kb-btn ghost"
-          disabled={busy !== null}
-          onClick={() => {
-            if (!window.confirm('Squash-merge this run into the base branch?')) return;
+          disabled={busy !== null || alreadyDone}
+          onClick={() =>
             void call(
-              'commit',
-              () => api.promoteCommit(runId),
-              (r) => {
-                const parts = [`Committed ${r.commitSha.slice(0, 7)} on ${r.base}`];
-                if (r.cleanup.worktreeRemoved) parts.push('worktree removed');
-                if (r.cleanup.branchDeleted) parts.push('branch deleted');
-                return parts.join(' · ');
-              },
-            );
-          }}
+              'mark-complete',
+              () =>
+                api.updateIssue(issueNumber, {
+                  labels: withStatus(issueLabels, 'done'),
+                }),
+              () => 'Marked complete · worktrees cleaned up (unmerged branches kept)',
+            )
+          }
         >
-          {busy === 'commit' ? 'Committing…' : 'Commit to base branch'}
+          {busy === 'mark-complete'
+            ? 'Marking…'
+            : alreadyDone
+              ? 'Marked complete'
+              : 'Mark as complete'}
         </button>
         <button
           type="button"
@@ -919,7 +1165,7 @@ function DecisionInline({ card }: { card: Card<DecisionPayload> }) {
   );
 }
 
-function EventRow({ event, isLive }: { event: AgentEvent; isLive: boolean }) {
+function EventRow({ event }: { event: AgentEvent }) {
   if (event.type === 'text') {
     const text = (event.payload as { text?: string }).text ?? '';
     return (
@@ -936,22 +1182,6 @@ function EventRow({ event, isLive }: { event: AgentEvent; isLive: boolean }) {
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-1)', whiteSpace: 'pre-wrap' }}>
           {text}
-        </div>
-      </div>
-    );
-  }
-  if (event.type === 'tool_use') {
-    const p = event.payload as { name?: string; input?: unknown };
-    return (
-      <div className="kb-tcall">
-        <div className="kb-tcall-head">
-          <span className="name">{p.name ?? 'tool'}</span>
-          <span className="arg">
-            {typeof p.input === 'string' ? p.input : JSON.stringify(p.input)}
-          </span>
-          <span className="dur" style={{ color: isLive ? 'var(--running)' : 'var(--ink-3)' }}>
-            {isLive ? '● live' : ageString(event.createdAt) + ' ago'}
-          </span>
         </div>
       </div>
     );
@@ -1324,9 +1554,19 @@ function AutopilotTab({ issueNumber }: { issueNumber: number }) {
     session.config.kind === 'feature-dev' ? session.config.personas : [];
   const checks = session.config.kind === 'qa' ? session.config.checks : [];
   const liveUi = session.config.kind === 'qa' ? session.config.liveUi : false;
+  const featureDevConfig =
+    session.config.kind === 'feature-dev' ? session.config : null;
+  const parallelism = featureDevConfig?.parallelism ?? 1;
+  const runningPersonaNames = new Set(
+    session.children
+      .filter((c) => c.status === 'running' && c.persona)
+      .map((c) => c.persona as string),
+  );
   const cycleHint =
     session.config.kind === 'feature-dev' && personas.length > 0
-      ? `Next: ${personas[session.cycleIndex % personas.length]?.name ?? '—'}`
+      ? parallelism > 1
+        ? `${runningPersonaNames.size}/${parallelism} slots running`
+        : `Next: ${personas[session.cycleIndex % personas.length]?.name ?? '—'}`
       : '';
 
   return (
@@ -1360,25 +1600,48 @@ function AutopilotTab({ issueNumber }: { issueNumber: number }) {
         <span style={{ color: 'var(--ink-1)' }}>
           {session.cycleIndex} {cycleHint ? `· ${cycleHint}` : ''}
         </span>
+        {featureDevConfig ? (
+          <>
+            <span style={{ color: 'var(--ink-3)' }}>Model</span>
+            <span style={{ color: 'var(--ink-1)' }} className="mono">
+              {featureDevConfig.model ?? 'default'}
+            </span>
+            <span style={{ color: 'var(--ink-3)' }}>Effort</span>
+            <span style={{ color: 'var(--ink-1)' }} className="mono">
+              {featureDevConfig.effort ?? 'medium'}
+            </span>
+            <span style={{ color: 'var(--ink-3)' }}>Parallel</span>
+            <span style={{ color: 'var(--ink-1)' }} className="mono">
+              {parallelism}
+            </span>
+          </>
+        ) : null}
       </div>
 
       {personas.length > 0 ? (
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>Personas</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {personas.map((p, i) => (
-              <span
-                key={p.id}
-                className="kb-chip mono"
-                style={
-                  i === session.cycleIndex % personas.length && session.status === 'running'
-                    ? { borderColor: 'var(--accent)', color: 'var(--accent)' }
-                    : undefined
-                }
-              >
-                {p.name}
-              </span>
-            ))}
+            {personas.map((p, i) => {
+              const highlighted =
+                session.status === 'running' &&
+                (parallelism > 1
+                  ? runningPersonaNames.has(p.name)
+                  : i === session.cycleIndex % personas.length);
+              return (
+                <span
+                  key={p.id}
+                  className="kb-chip mono"
+                  style={
+                    highlighted
+                      ? { borderColor: 'var(--accent)', color: 'var(--accent)' }
+                      : undefined
+                  }
+                >
+                  {p.name}
+                </span>
+              );
+            })}
           </div>
         </div>
       ) : null}

@@ -10,10 +10,12 @@ import {
   type AgentSupervisor,
   type AutopilotManager,
   type DraftIssueFn,
+  type SentryAnalyzerFn,
+  type SentryRuntime,
   type SuggestFeatureFn,
 } from '@kanbots/api';
 import { GitHubClient, resolveGitHubToken, type IssueSource } from '@kanbots/core';
-import { createComposer, createSuggester } from '@kanbots/dispatcher';
+import { createComposer, createSentryAnalyzer, createSuggester } from '@kanbots/dispatcher';
 import {
   describeKanbotsDir,
   ensureGitignoreEntry,
@@ -37,6 +39,13 @@ import {
   type OwnedSubscriptionRegistry,
 } from './ipc/subscriptions.js';
 import { registerHandlers } from './ipc/register.js';
+import { SentryPoller } from './sentry-poller.js';
+import {
+  decryptToken,
+  encryptToken,
+  envTokenOverride,
+  safeStorageAvailable,
+} from './sentry-token.js';
 import type { ActiveWorkspaceInfo, BootstrapPayload, RecentWorkspace } from './types.js';
 
 interface ActiveWorkspace {
@@ -48,6 +57,8 @@ interface ActiveWorkspace {
   autopilot: AutopilotManager;
   draftIssue: DraftIssueFn;
   suggestIssue: SuggestFeatureFn;
+  analyzeSentryError: SentryAnalyzerFn;
+  sentryPoller: SentryPoller;
   subscriptions: OwnedSubscriptionRegistry;
   unregisterHandlers: () => void;
   ownerId: number;
@@ -185,6 +196,11 @@ async function closeActiveWorkspace(): Promise<void> {
     // ignore
   }
   try {
+    activeWorkspace.sentryPoller.stop();
+  } catch {
+    // ignore
+  }
+  try {
     await activeWorkspace.autopilot.stopAllForShutdown();
   } catch {
     // ignore
@@ -231,6 +247,20 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     throw err;
   }
 
+  const sentryPoller = new SentryPoller({
+    store,
+    source: source,
+    broadcast: broadcastIssueChange,
+  });
+  const sentryRuntime: SentryRuntime = {
+    encryptToken,
+    decryptToken,
+    envTokenOverride,
+    safeStorageAvailable,
+    syncNow: () => sentryPoller.runOnce(),
+    restartPoller: () => sentryPoller.restart(),
+  };
+
   const rawSupervisor = createSupervisor({
     store,
     repoPath: gitRoot,
@@ -253,6 +283,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
   const supervisor = wrapNotifyingSupervisor(rawSupervisor);
   const draftIssue = createComposer({ cwd: gitRoot });
   const suggestIssue = createSuggester({ cwd: gitRoot });
+  const analyzeSentryError = createSentryAnalyzer({ cwd: gitRoot });
 
   // Demote any in-progress / agent-running labels left over from a previous
   // session. The supervisor sweep above marked stale runs failed; this
@@ -306,6 +337,8 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
       draftIssue,
       suggestIssue,
       autopilot,
+      analyzeSentryError,
+      sentry: sentryRuntime,
     },
     subscriptions,
   });
@@ -340,11 +373,15 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     autopilot,
     draftIssue,
     suggestIssue,
+    analyzeSentryError,
+    sentryPoller,
     subscriptions,
     unregisterHandlers,
     ownerId,
     detachOwnerCleanup,
   };
+
+  sentryPoller.start();
 
   await ensureGitignoreEntry(gitRoot, '.kanbots/').catch(() => {
     // best-effort

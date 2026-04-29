@@ -17,15 +17,22 @@ import * as config from './config.js';
 import * as cost from './cost.js';
 import * as decisions from './decisions.js';
 import * as issues from './issues.js';
+import * as sentry from './sentry.js';
 import type {
   CreateHandlersOptions,
   HandlerDeps,
+  SentryRuntime,
   SubscriptionRegistry,
 } from './types.js';
 import * as workspace from './workspace.js';
 
-export type { CreateHandlersOptions, HandlerDeps, SubscriptionRegistry };
-export type { Config, DraftIssueFn, SuggestFeatureFn } from './types.js';
+export type { CreateHandlersOptions, HandlerDeps, SentryRuntime, SubscriptionRegistry };
+export type {
+  Config,
+  DraftIssueFn,
+  SentryAnalyzerFn,
+  SuggestFeatureFn,
+} from './types.js';
 export type { RunCheckImpl } from './agent-checks.js';
 export type { StartPreviewImpl } from './agent-preview.js';
 
@@ -42,6 +49,7 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
   const map: Handlers = {
     'config:get': () => config.getConfig(deps),
     'issues:list': (args) => issues.list(deps, args),
+    'issues:list-archived': () => issues.listArchived(deps),
     'issues:get': (args) => issues.get(deps, args),
     'issues:create': (args) => issues.create(deps, args),
     'issues:patch': (args) => issues.patch(deps, args),
@@ -51,6 +59,7 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'issues:dispatch': (args) => issues.dispatch(deps, args),
     'issues:start-agent': (args) => agentActions.startAgent(deps, args),
     'issues:archive': (args) => agentActions.archive(deps, args),
+    'issues:unarchive': (args) => agentActions.unarchive(deps, args),
     'issues:approve': (args) => agentActions.approve(deps, args),
     'issues:request-changes': (args) => agentActions.requestChanges(deps, args),
     'issues:split': (args) => agentActions.split(deps, args),
@@ -75,6 +84,7 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'cards:dismiss': (args) => cards.dismiss(deps, args),
     'decisions:pending': () => decisions.pending(deps),
     'cost:today': () => cost.today(deps),
+    'cost:usage': () => cost.usage(deps),
     'workspace:get': () => workspace.getWorkspace(deps),
     'folders:list': () => workspace.listFolders(deps),
     'folders:add': (args) => workspace.addFolder(deps, args),
@@ -85,6 +95,12 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'autopilot:stop': (args) => autopilot.stop(deps, args),
     'autopilot:list-active': () => autopilot.listActive(deps),
     'autopilot:get-by-issue': (args) => autopilot.getByIssue(deps, args),
+    'sentry:get-config': () => sentry.getConfig(deps),
+    'sentry:save-config': (args) => sentry.saveConfig(deps, args),
+    'sentry:test-connection': (args) => sentry.testConnection(deps, args),
+    'sentry:sync-now': () => sentry.syncNow(deps),
+    'sentry:analyze': (args) => sentry.analyze(deps, args),
+    'sentry:apply-suggestion': (args) => sentry.applySuggestion(deps, args),
   };
   return map;
 }

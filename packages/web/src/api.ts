@@ -22,6 +22,11 @@ import type {
   Message,
   PendingDecisionPayload,
   PreviewStatePayload,
+  SentryConfigInput,
+  SentryConfigPayload,
+  SentrySuggestion,
+  SentrySyncResult,
+  SentryTestConnectionResult,
   StatusKey,
   UpdateIssuePatch,
   Workspace,
@@ -217,6 +222,10 @@ export const api = {
     invoke('issues:request-changes', { number: issueNumber }),
   archiveIssue: (issueNumber: number): Promise<Issue> =>
     invoke('issues:archive', { number: issueNumber }),
+  unarchiveIssue: (issueNumber: number): Promise<Issue> =>
+    invoke('issues:unarchive', { number: issueNumber }),
+  listArchivedIssues: (): Promise<Issue[]> =>
+    invoke('issues:list-archived', undefined),
   splitIssue: (
     issueNumber: number,
     subtasks: Array<{ title: string; body?: string }>,
@@ -251,6 +260,8 @@ export const api = {
     invoke('agent-runs:promote-pr', { runId }),
   costToday: (): Promise<{ totalUsd: number; since: string }> =>
     invoke('cost:today', undefined),
+  costUsage: (): Promise<ChannelResult<'cost:usage'>> =>
+    invoke('cost:usage', undefined),
   resolveCard: (cardId: number, value: string): Promise<ResolveCardResult> =>
     invoke('cards:resolve', { cardId, value }),
   dismissCard: (cardId: number): Promise<DismissCardResult> =>
@@ -280,4 +291,20 @@ export const api = {
     invoke('autopilot:list-active', undefined),
   getAutopilotByIssue: (issueNumber: number): Promise<AutopilotSession | null> =>
     invoke('autopilot:get-by-issue', { issueNumber }),
+  getSentryConfig: (): Promise<SentryConfigPayload> =>
+    invoke('sentry:get-config', undefined),
+  saveSentryConfig: (input: SentryConfigInput): Promise<SentryConfigPayload> =>
+    invoke('sentry:save-config', input),
+  testSentryConnection: (input: {
+    token?: string;
+    orgSlug?: string;
+    projectSlug?: string;
+  } = {}): Promise<SentryTestConnectionResult> =>
+    invoke('sentry:test-connection', input),
+  syncSentryNow: (): Promise<SentrySyncResult> =>
+    invoke('sentry:sync-now', undefined),
+  analyzeSentryIssue: (issueNumber: number): Promise<SentrySuggestion> =>
+    invoke('sentry:analyze', { issueNumber }),
+  applySentrySuggestion: (issueNumber: number): Promise<Issue> =>
+    invoke('sentry:apply-suggestion', { issueNumber }),
 } as const;
