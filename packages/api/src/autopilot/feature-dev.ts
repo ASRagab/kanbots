@@ -107,7 +107,7 @@ async function runSlot(
     // sum total_cost_usd across this session's children. Best-effort: cost
     // only settles when each child completes, so a child can overshoot before
     // we check.
-    const preIterSession = ctx.store.autopilotSessions.findById(initialSession.id);
+    const preIterSession = ctx.store.autopilotSessions.findById(sessionId);
     if (preIterSession) {
       const budget = ctx.resolveSessionBudget(preIterSession.config);
       if (budget !== null) {
