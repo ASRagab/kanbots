@@ -261,7 +261,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     restartPoller: () => sentryPoller.restart(),
   };
 
-  const rawSupervisor = createSupervisor({
+  const rawSupervisor = await createSupervisor({
     store,
     repoPath: gitRoot,
     onRunComplete: async (run) => {

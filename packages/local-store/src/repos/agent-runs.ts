@@ -192,6 +192,13 @@ export class AgentRunsRepo {
     return rows.map(rowToAgentRun);
   }
 
+  listPreviewOrphans(): AgentRun[] {
+    const rows = this.db
+      .prepare('SELECT * FROM agent_runs WHERE preview_pid IS NOT NULL')
+      .all() as AgentRunRow[];
+    return rows.map(rowToAgentRun);
+  }
+
   // 'awaiting_input' is intentionally excluded — those runs have already exited
   // cleanly and are waiting for the user. They should resume on the next message.
   markStartingRunningAsInterrupted(reason: string): AgentRun[] {

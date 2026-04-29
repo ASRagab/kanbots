@@ -84,7 +84,7 @@ describe('createSupervisor', () => {
     store.close();
   });
 
-  it('sweeps stale starting/running rows on construction', () => {
+  it('sweeps stale starting/running rows on construction', async () => {
     const stale1 = store.agentRuns.create({ threadId });
     const stale2 = store.agentRuns.create({ threadId });
     store.agentRuns.update(stale1.id, { status: 'starting' });
@@ -92,15 +92,33 @@ describe('createSupervisor', () => {
     const waiting = store.agentRuns.create({ threadId });
     store.agentRuns.update(waiting.id, { status: 'awaiting_input' });
 
-    createSupervisor({ store, repoPath: '/tmp' });
+    await createSupervisor({
+      store,
+      repoPath: '/tmp',
+      reapOverrides: {
+        // Pretend pid 9999 is dead so we don't actually try to signal anything.
+        kill: () => {
+          const err = new Error('no such process');
+          (err as NodeJS.ErrnoException).code = 'ESRCH';
+          throw err;
+        },
+        readComm: () => null,
+        sleep: async () => {},
+        graceMs: 0,
+      },
+    });
 
     expect(store.agentRuns.findById(stale1.id)?.status).toBe('failed');
     expect(store.agentRuns.findById(stale2.id)?.status).toBe('failed');
     expect(store.agentRuns.findById(stale2.id)?.pid).toBeNull();
-    expect(store.agentRuns.findById(stale2.id)?.exitReason).toMatch(/restart/);
+    // stale1 had no pid → generic restart reason; stale2 had pid 9999 →
+    // per-row "pid not running" reason after the reaper failed liveness.
+    expect(store.agentRuns.findById(stale1.id)?.exitReason).toMatch(/restart/);
+    expect(store.agentRuns.findById(stale2.id)?.exitReason).toMatch(/9999 not running/);
     // awaiting_input is left alone.
     expect(store.agentRuns.findById(waiting.id)?.status).toBe('awaiting_input');
   });
+
 });
 
 describe('supervisor.stop', () => {
@@ -117,7 +135,7 @@ describe('supervisor.stop', () => {
   });
 
   it('marks an active-in-DB-but-untracked run as stopped', async () => {
-    const supervisor = createSupervisor({ store, repoPath: '/tmp' });
+    const supervisor = await createSupervisor({ store, repoPath: '/tmp' });
 
     const ghost = store.agentRuns.create({ threadId });
     store.agentRuns.update(ghost.id, { status: 'awaiting_input' });
@@ -129,7 +147,7 @@ describe('supervisor.stop', () => {
   });
 
   it('returns terminal runs unchanged', async () => {
-    const supervisor = createSupervisor({ store, repoPath: '/tmp' });
+    const supervisor = await createSupervisor({ store, repoPath: '/tmp' });
 
     const done = store.agentRuns.create({ threadId });
     store.agentRuns.update(done.id, { status: 'complete', endedAt: '2026-01-01T00:00:00Z' });
@@ -140,7 +158,7 @@ describe('supervisor.stop', () => {
   });
 
   it('throws when the run is missing', async () => {
-    const supervisor = createSupervisor({ store, repoPath: '/tmp' });
+    const supervisor = await createSupervisor({ store, repoPath: '/tmp' });
     await expect(supervisor.stop(99999)).rejects.toThrow(/not found/);
   });
 });

@@ -18,6 +18,12 @@ import {
 } from '@kanbots/dispatcher';
 import type { AgentEvent, AgentRun, AgentRunStatus, Card, Store } from '@kanbots/local-store';
 import { BRIEFING_MARKER, renderSiblingBriefing } from './sibling-briefing.js';
+import {
+  describeReapOutcome,
+  reapOrphanProcess,
+  type ReapOptions,
+  type ReapOutcome,
+} from './reap-orphans.js';
 
 const DEFAULT_DECISION_PROMPT = `When you need a decision from the user before continuing, end your turn with a fenced code block:
 
@@ -50,6 +56,8 @@ export interface CreateSupervisorOptions {
    * so callers cannot deadlock on an unkillable child.
    */
   stopGracefulTimeoutMs?: number;
+  /** Test seam: override pid liveness/comm/kill behaviour for reaping orphans. */
+  reapOverrides?: Partial<ReapOptions>;
 }
 
 const STOP_FORCE_RESOLVE_SLACK_MS = 2_000;
@@ -115,7 +123,9 @@ function threadAlreadyActiveError(run: AgentRun): ThreadAlreadyActiveError {
   return err;
 }
 
-export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor {
+export async function createSupervisor(
+  opts: CreateSupervisorOptions,
+): Promise<AgentSupervisor> {
   const { store, repoPath } = opts;
   const startAgent = opts.startAgentRun ?? defaultStartAgentRun;
   const makeWorktree = opts.createWorktree ?? defaultCreateWorktree;
@@ -126,10 +136,10 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
 
   // Any 'starting'/'running' rows on construction belong to a previous app
   // process — the supervisor's in-memory handles don't survive restart, so
-  // those runs are by definition dead. Mark them failed so the UI stops
-  // reporting them as live, then sweep any pending decisions whose run is
-  // no longer in an active state.
-  store.agentRuns.markStartingRunningAsInterrupted('interrupted: app restart');
+  // those runs are by definition dead. Before flipping their DB rows to
+  // 'failed', try to actually kill the OS-level child processes whose pids we
+  // recorded; otherwise they keep mutating their worktree behind our back.
+  await reapPreviousGenerationOrphans(store, opts.reapOverrides);
   store.cards.dismissOrphanPendingDecisions();
 
   const active = new Map<number, ActiveRun>();
@@ -516,4 +526,94 @@ function truncate(s: string, max: number): string {
 
 async function defaultPrepareDir(path: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
+}
+
+const CLAUDE_COMMAND_HINTS = ['claude'] as const;
+// Preview commands are user-defined dev servers (default `pnpm dev`). Match
+// the most likely process names a node-based dev server would surface as.
+const PREVIEW_COMMAND_HINTS = ['node', 'pnpm', 'npm', 'yarn', 'bun', 'next', 'vite'] as const;
+
+async function reapPreviousGenerationOrphans(
+  store: Store,
+  overrides: Partial<ReapOptions> | undefined,
+): Promise<void> {
+  const orphans = store.agentRuns.listOrphans();
+  const previewOrphans = store.agentRuns.listPreviewOrphans();
+
+  // Reap claude orphans (rows whose status is starting/running/awaiting_input
+  // with a recorded pid). After reaping, mark the row failed with a per-row
+  // exit reason describing the outcome.
+  await Promise.all(
+    orphans.map(async (run) => {
+      if (run.pid === null) return;
+      const outcome = await reapOrphanProcess(run.pid, {
+        expectedCommandSubstrings: CLAUDE_COMMAND_HINTS,
+        ...overrides,
+      });
+      const reason = describeReapOutcome(outcome);
+      const patch: Parameters<typeof store.agentRuns.update>[1] = {
+        status: 'failed',
+        endedAt: new Date().toISOString(),
+        pid: null,
+        exitReason: reason,
+      };
+      // If this row also had a preview pid, fold its reaping into the same row
+      // update so we don't bounce the UI twice.
+      if (run.previewPid !== null) {
+        const previewOutcome = await reapPreviewPid(run.previewPid, overrides);
+        patch.previewPid = null;
+        patch.previewState = 'stopped';
+        patch.exitReason = `${reason}; preview ${shortPreviewOutcome(previewOutcome)}`;
+      }
+      store.agentRuns.update(run.id, patch);
+    }),
+  );
+
+  // Now sweep any remaining starting/running rows that didn't have a pid (e.g.
+  // a run that crashed mid-spawn). These get the generic restart reason.
+  store.agentRuns.markStartingRunningAsInterrupted('interrupted: app restart');
+
+  // Reap standalone preview orphans — preview pids attached to rows that are
+  // no longer in an active status (e.g. complete runs whose preview was still
+  // serving a dev server when the app died).
+  const handledIds = new Set(orphans.map((r) => r.id));
+  await Promise.all(
+    previewOrphans.map(async (run) => {
+      if (handledIds.has(run.id)) return;
+      if (run.previewPid === null) return;
+      const outcome = await reapPreviewPid(run.previewPid, overrides);
+      store.agentRuns.update(run.id, {
+        previewPid: null,
+        previewState: 'stopped',
+        previewUrl: null,
+      });
+      // exitReason is reserved for the run itself; preview lifecycle is
+      // already conveyed by previewState. Outcome details are dropped here on
+      // purpose to avoid clobbering meaningful run-level reasons.
+      void outcome;
+    }),
+  );
+}
+
+async function reapPreviewPid(
+  pid: number,
+  overrides: Partial<ReapOptions> | undefined,
+): Promise<ReapOutcome> {
+  return reapOrphanProcess(pid, {
+    expectedCommandSubstrings: PREVIEW_COMMAND_HINTS,
+    ...overrides,
+  });
+}
+
+function shortPreviewOutcome(outcome: ReapOutcome): string {
+  switch (outcome.kind) {
+    case 'reaped':
+      return `pid ${outcome.pid} reaped (${outcome.signal})`;
+    case 'gone':
+      return `pid ${outcome.pid} not running`;
+    case 'skipped':
+      return `pid ${outcome.pid} skipped`;
+    case 'error':
+      return `pid ${outcome.pid} reap error`;
+  }
 }
