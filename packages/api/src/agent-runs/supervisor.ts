@@ -76,9 +76,28 @@ interface ActiveRun {
   handle: AgentRunHandle;
   hasDecision: boolean;
   pendingMessageId: number | null;
+  threadId: number;
 }
 
 const ACTIVE_STATUSES: ReadonlyArray<AgentRunStatus> = ['starting', 'running', 'awaiting_input'];
+
+export interface ThreadAlreadyActiveError extends Error {
+  name: 'AlreadyActive';
+  run: AgentRun;
+}
+
+export function isThreadAlreadyActiveError(err: unknown): err is ThreadAlreadyActiveError {
+  return err instanceof Error && err.name === 'AlreadyActive' && 'run' in err;
+}
+
+function threadAlreadyActiveError(run: AgentRun): ThreadAlreadyActiveError {
+  const err = new Error(
+    `agent run #${run.id} is already ${run.status} on thread ${run.threadId}`,
+  ) as ThreadAlreadyActiveError;
+  err.name = 'AlreadyActive';
+  err.run = run;
+  return err;
+}
 
 export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor {
   const { store, repoPath } = opts;
@@ -123,8 +142,27 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
     return msg.id;
   }
 
+  function findActiveRunForThread(threadId: number): AgentRun | null {
+    for (const [runId, entry] of active) {
+      if (entry.threadId === threadId) {
+        const row = store.agentRuns.findById(runId);
+        if (row) return row;
+      }
+    }
+    // Cross-check the DB so the guard survives a restart sweep window where
+    // the in-memory `active` map is empty but rows might still be in an
+    // active status (e.g. 'awaiting_input' is intentionally left alone by
+    // the restart sweep).
+    return store.agentRuns.findActiveForThread(threadId);
+  }
+
   function wireHandle(run: AgentRun, handle: AgentRunHandle): void {
-    const entry: ActiveRun = { handle, hasDecision: false, pendingMessageId: null };
+    const entry: ActiveRun = {
+      handle,
+      hasDecision: false,
+      pendingMessageId: null,
+      threadId: run.threadId,
+    };
     active.set(run.id, entry);
 
     handle.on('event', (streamEvent: StreamEvent) => {
@@ -214,6 +252,10 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
   }
 
   async function start(input: StartRunInput): Promise<AgentRun> {
+    const conflicting = findActiveRunForThread(input.threadId);
+    if (conflicting !== null) {
+      throw threadAlreadyActiveError(conflicting);
+    }
     let run = store.agentRuns.create({ threadId: input.threadId, status: 'starting' });
     const branch = defaultBranchName({
       issueNumber: input.issueNumber,
@@ -264,6 +306,10 @@ export function createSupervisor(opts: CreateSupervisorOptions): AgentSupervisor
     if (!existing) throw new Error(`agent run ${input.runId} not found`);
     if (active.has(input.runId)) {
       throw new Error(`agent run ${input.runId} is already active`);
+    }
+    const conflicting = findActiveRunForThread(existing.threadId);
+    if (conflicting !== null && conflicting.id !== input.runId) {
+      throw threadAlreadyActiveError(conflicting);
     }
     if (!existing.sessionId) {
       throw new Error(`agent run ${input.runId} has no session_id to resume`);

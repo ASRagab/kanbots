@@ -1,6 +1,75 @@
+import type {
+  AgentRunHandle,
+  CreateWorktreeInput,
+  RunSummary,
+  StartAgentRunOptions,
+  Worktree,
+} from '@kanbots/dispatcher';
 import { openStoreInMemory, type Store } from '@kanbots/local-store';
+import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createSupervisor } from '../src/agent-runs/supervisor.js';
+
+interface FakeHandle extends AgentRunHandle {
+  emitClose(opts?: { exitCode?: number; killedByStop?: boolean }): void;
+}
+
+function makeFakeHandle(pid = 1234): FakeHandle {
+  const emitter = new EventEmitter();
+  let resolveDone: (summary: RunSummary) => void = () => undefined;
+  const done = new Promise<RunSummary>((resolve) => {
+    resolveDone = resolve;
+  });
+  const handle = {
+    pid,
+    done,
+    on: (ev: string, fn: (...args: unknown[]) => void): FakeHandle => {
+      emitter.on(ev, fn);
+      return handle as unknown as FakeHandle;
+    },
+    off: (ev: string, fn: (...args: unknown[]) => void): FakeHandle => {
+      emitter.off(ev, fn);
+      return handle as unknown as FakeHandle;
+    },
+    stop: (): void => undefined,
+    emitClose: (opts?: { exitCode?: number; killedByStop?: boolean }): void => {
+      const summary: RunSummary = {
+        exitCode: opts?.exitCode ?? 0,
+        killedByStop: opts?.killedByStop ?? false,
+        stderr: '',
+        result: null,
+      };
+      emitter.emit('close', summary);
+      resolveDone(summary);
+    },
+  };
+  return handle as unknown as FakeHandle;
+}
+
+function buildSupervisorWithFakes(store: Store): {
+  supervisor: ReturnType<typeof createSupervisor>;
+  startCalls: StartAgentRunOptions[];
+  worktreeCalls: CreateWorktreeInput[];
+  handle: FakeHandle;
+} {
+  const startCalls: StartAgentRunOptions[] = [];
+  const worktreeCalls: CreateWorktreeInput[] = [];
+  const handle = makeFakeHandle();
+  const supervisor = createSupervisor({
+    store,
+    repoPath: '/tmp/repo',
+    prepareWorktreeDir: async () => undefined,
+    createWorktree: async (input: CreateWorktreeInput): Promise<Worktree> => {
+      worktreeCalls.push(input);
+      return { branch: input.branch, path: input.worktreePath, baseRef: null };
+    },
+    startAgentRun: (opts: StartAgentRunOptions): AgentRunHandle => {
+      startCalls.push(opts);
+      return handle;
+    },
+  });
+  return { supervisor, startCalls, worktreeCalls, handle };
+}
 
 describe('createSupervisor', () => {
   let store: Store;
@@ -73,5 +142,99 @@ describe('supervisor.stop', () => {
   it('throws when the run is missing', async () => {
     const supervisor = createSupervisor({ store, repoPath: '/tmp' });
     await expect(supervisor.stop(99999)).rejects.toThrow(/not found/);
+  });
+});
+
+describe('supervisor.start one-run-per-thread guard', () => {
+  let store: Store;
+  let threadId: number;
+
+  beforeEach(() => {
+    store = openStoreInMemory();
+    threadId = store.threads.create({ repoOwner: 'a', repoName: 'b', issueNumber: 7 }).id;
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  it('rejects a second concurrent start on the same thread with AlreadyActive', async () => {
+    const { supervisor, startCalls, worktreeCalls } = buildSupervisorWithFakes(store);
+
+    const first = await supervisor.start({ threadId, issueNumber: 7, prompt: 'hi' });
+    expect(first.status).toBe('running');
+
+    const before = store.agentRuns.listByThread(threadId).length;
+    let caught: Error | null = null;
+    try {
+      await supervisor.start({ threadId, issueNumber: 7, prompt: 'again' });
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught?.name).toBe('AlreadyActive');
+    expect((caught as unknown as { run: { id: number } }).run.id).toBe(first.id);
+
+    // No new row created, no extra worktree, no extra spawn.
+    expect(store.agentRuns.listByThread(threadId).length).toBe(before);
+    expect(startCalls.length).toBe(1);
+    expect(worktreeCalls.length).toBe(1);
+  });
+
+  it('rejects a start when the DB has an awaiting_input run on the thread', async () => {
+    const supervisor = createSupervisor({ store, repoPath: '/tmp' });
+    const ghost = store.agentRuns.create({ threadId });
+    store.agentRuns.update(ghost.id, { status: 'awaiting_input' });
+
+    let caught: Error | null = null;
+    try {
+      await supervisor.start({ threadId, issueNumber: 7, prompt: 'hi' });
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught?.name).toBe('AlreadyActive');
+    expect((caught as unknown as { run: { id: number } }).run.id).toBe(ghost.id);
+    expect(store.agentRuns.listByThread(threadId).length).toBe(1);
+  });
+
+  it('allows a fresh start once the prior run terminates', async () => {
+    const { supervisor, handle } = buildSupervisorWithFakes(store);
+    const first = await supervisor.start({ threadId, issueNumber: 7, prompt: 'a' });
+    handle.emitClose({ exitCode: 0 });
+    await handle.done;
+
+    expect(store.agentRuns.findById(first.id)?.status).toBe('complete');
+
+    // Replace handle for the second run by building a fresh fake supervisor.
+    const second = buildSupervisorWithFakes(store);
+    const next = await second.supervisor.start({ threadId, issueNumber: 7, prompt: 'b' });
+    expect(next.status).toBe('running');
+    expect(next.id).not.toBe(first.id);
+  });
+
+  it('resume rejects when a different active run exists on the same thread', async () => {
+    const { supervisor, handle } = buildSupervisorWithFakes(store);
+    const live = await supervisor.start({ threadId, issueNumber: 7, prompt: 'a' });
+
+    // Create an inactive prior run that *could* be resumed.
+    const prior = store.agentRuns.create({ threadId });
+    store.agentRuns.update(prior.id, {
+      status: 'failed',
+      sessionId: 'sess-x',
+      worktreePath: '/tmp/w',
+      endedAt: new Date().toISOString(),
+    });
+
+    let caught: Error | null = null;
+    try {
+      await supervisor.resume({ runId: prior.id, prompt: 'continue' });
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught?.name).toBe('AlreadyActive');
+    expect((caught as unknown as { run: { id: number } }).run.id).toBe(live.id);
+
+    handle.emitClose({ exitCode: 0 });
+    await handle.done;
   });
 });
