@@ -58,6 +58,21 @@ export async function diff(
   return collectDiff(run.worktreePath, run.branchName);
 }
 
+export async function revealWorktree(
+  deps: HandlerDeps,
+  args: RunIdArgs,
+): Promise<{ worktreePath: string }> {
+  const parsed = parseArgs(idSchema, args);
+  const run = deps.store.agentRuns.findById(parsed.runId);
+  if (!run) throw notFound(`agent run ${parsed.runId} not found`);
+  if (!run.worktreePath) throw badRequest('run has no worktree');
+  if (!deps.revealPath) {
+    throw badRequest('reveal is not supported in this environment');
+  }
+  await deps.revealPath(run.worktreePath);
+  return { worktreePath: run.worktreePath };
+}
+
 interface StatsCacheEntry {
   expiresAt: number;
   payload: RunStatsResult;

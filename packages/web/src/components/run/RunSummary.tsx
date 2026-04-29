@@ -119,6 +119,15 @@ export function RunSummary({ run, layout = 'inspector', onRunChecks }: RunSummar
     }
   }
 
+  async function handleRevealWorktree(): Promise<void> {
+    if (!run) return;
+    try {
+      await api.revealAgentRunWorktree(run.id);
+    } catch {
+      // surfaced elsewhere
+    }
+  }
+
   const checkByKind = new Map(checks.map((c) => [c.kind, c]));
   const tsc = checkByKind.get('typecheck');
   const tests = checkByKind.get('tests');
@@ -160,6 +169,16 @@ export function RunSummary({ run, layout = 'inspector', onRunChecks }: RunSummar
         >
           Run checks
         </button>
+        {run.worktreePath ? (
+          <button
+            type="button"
+            className="kb-btn ghost kb-run-checks-run"
+            onClick={() => void handleRevealWorktree()}
+            title="Open worktree in file manager"
+          >
+            Open worktree ↗
+          </button>
+        ) : null}
       </div>
     </div>
   );

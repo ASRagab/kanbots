@@ -69,6 +69,7 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'agent-runs:stop': (args) => agentRuns.stop(deps, args),
     'agent-runs:diff': (args) => agentRuns.diff(deps, args),
     'agent-runs:stats': (args) => agentRuns.stats(deps, args),
+    'agent-runs:reveal-worktree': (args) => agentRuns.revealWorktree(deps, args),
     'agent-runs:checks:list': (args) => agentChecks.list(deps, args),
     'agent-runs:checks:run': (args) => agentChecks.runChecks(deps, args),
     'agent-runs:checks:commands': () => agentChecks.commands(deps),

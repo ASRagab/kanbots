@@ -46,6 +46,7 @@ export interface HandlerDeps {
   analyzeSentryError: SentryAnalyzerFn;
   sentry: SentryRuntime;
   budgets?: WorkspaceBudgetsAccessor;
+  revealPath?: (path: string) => Promise<void>;
 }
 
 export interface SubscriptionRegisterArgs {

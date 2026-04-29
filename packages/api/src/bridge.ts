@@ -472,6 +472,10 @@ export interface BridgeChannels {
   'agent-runs:stop': { args: { runId: number }; result: AgentRun };
   'agent-runs:diff': { args: { runId: number }; result: DiffPayload };
   'agent-runs:stats': { args: { runId: number }; result: RunStatsResult };
+  'agent-runs:reveal-worktree': {
+    args: { runId: number };
+    result: { worktreePath: string };
+  };
   'agent-runs:checks:list': { args: { runId: number }; result: AgentCheck[] };
   'agent-runs:checks:run': {
     args: { runId: number; kinds?: CheckKind[] };

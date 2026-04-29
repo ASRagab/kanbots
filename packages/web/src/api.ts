@@ -182,6 +182,8 @@ export const api = {
   getAgentRun: (runId: number): Promise<AgentRun> => invoke('agent-runs:get', { runId }),
   getAgentRunDiff: (runId: number): Promise<DiffPayload> =>
     invoke('agent-runs:diff', { runId }),
+  revealAgentRunWorktree: (runId: number): Promise<{ worktreePath: string }> =>
+    invoke('agent-runs:reveal-worktree', { runId }),
   getAgentRunStats: (
     runId: number,
   ): Promise<{ additions: number; deletions: number; filesChanged: number }> =>

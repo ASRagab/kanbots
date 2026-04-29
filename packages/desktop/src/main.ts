@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron';
 import {
   createAutopilotManager,
   createHandlers,
@@ -394,6 +394,10 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
             activeWorkspace.config = next;
           }
         },
+      },
+      revealPath: async (path) => {
+        const error = await shell.openPath(path);
+        if (error) throw new Error(error);
       },
     },
     subscriptions,
