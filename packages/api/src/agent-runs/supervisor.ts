@@ -7,8 +7,10 @@ import {
   defaultWorktreePath,
   DEFAULT_GRACEFUL_TIMEOUT_MS,
   stampWorktreeIdentity as defaultStampWorktreeIdentity,
+  inspectToolUse,
   startAgentRun as defaultStartAgentRun,
   type AgentRunHandle,
+  type ContainmentEscape,
   type CreateWorktreeInput,
   type StampWorktreeIdentityInput,
   type StampWorktreeIdentityResult,
@@ -39,6 +41,8 @@ const DEFAULT_DECISION_PROMPT = `When you need a decision from the user before c
 
 After emitting the block, end your turn (do not continue working). The user will pick an option and you will resume with their choice provided as the next user message.`;
 
+export type ContainmentMode = 'off' | 'warn' | 'pause';
+
 export interface CreateSupervisorOptions {
   store: Store;
   repoPath: string;
@@ -58,6 +62,9 @@ export interface CreateSupervisorOptions {
   stopGracefulTimeoutMs?: number;
   /** Test seam: override pid liveness/comm/kill behaviour for reaping orphans. */
   reapOverrides?: Partial<ReapOptions>;
+  /** How to react when an agent's tool_use targets a path outside its
+   *  worktree. Default: 'warn'. */
+  containmentMode?: ContainmentMode;
 }
 
 const STOP_FORCE_RESOLVE_SLACK_MS = 2_000;
@@ -131,6 +138,8 @@ interface ActiveRun {
   hasDecision: boolean;
   pendingMessageId: number | null;
   threadId: number;
+  worktreePath: string | null;
+  containmentPaused: boolean;
 }
 
 const ACTIVE_STATUSES: ReadonlyArray<AgentRunStatus> = ['starting', 'running', 'awaiting_input'];
@@ -163,6 +172,7 @@ export async function createSupervisor(
   const prepareDir = opts.prepareWorktreeDir ?? defaultPrepareDir;
   const decisionInstructions = opts.appendSystemPromptDefault ?? DEFAULT_DECISION_PROMPT;
   const stopGracefulTimeoutMs = opts.stopGracefulTimeoutMs ?? DEFAULT_GRACEFUL_TIMEOUT_MS;
+  const containmentMode: ContainmentMode = opts.containmentMode ?? 'warn';
 
   // Any 'starting'/'running' rows on construction belong to a previous app
   // process — the supervisor's in-memory handles don't survive restart, so
@@ -333,6 +343,8 @@ export async function createSupervisor(
       hasDecision: false,
       pendingMessageId: null,
       threadId: run.threadId,
+      worktreePath: run.worktreePath,
+      containmentPaused: false,
     };
     active.set(run.id, entry);
 
@@ -376,6 +388,21 @@ export async function createSupervisor(
         entry.hasDecision = true;
         emitter.emit(cardChannel(run.id), card);
         return;
+      }
+      if (
+        streamEvent.kind === 'tool_use' &&
+        containmentMode !== 'off' &&
+        entry.worktreePath !== null &&
+        !entry.containmentPaused
+      ) {
+        const verdict = inspectToolUse({
+          worktreePath: entry.worktreePath,
+          name: streamEvent.name,
+          input: streamEvent.input,
+        });
+        if (verdict.kind === 'escape') {
+          handleContainmentEscape(run, entry, streamEvent.name, verdict);
+        }
       }
       const persisted = persistEvent(store, run.id, streamEvent);
       if (persisted) emitter.emit(eventChannel(run.id), persisted);
@@ -439,6 +466,56 @@ export async function createSupervisor(
       });
       emitter.emit(eventChannel(run.id), errEvent);
     });
+  }
+
+  function handleContainmentEscape(
+    run: AgentRun,
+    entry: ActiveRun,
+    toolName: string,
+    escape: ContainmentEscape,
+  ): void {
+    const payload = {
+      tool: toolName,
+      reason: escape.reason,
+      paths: escape.paths,
+      heuristic: escape.heuristic,
+      mode: containmentMode,
+    };
+    const ev = store.events.append({
+      agentRunId: run.id,
+      type: 'containment_warning',
+      payload,
+    });
+    emitter.emit(eventChannel(run.id), ev);
+    if (containmentMode !== 'pause') return;
+
+    entry.containmentPaused = true;
+    const question =
+      `Agent attempted ${toolName} outside its worktree (${escape.paths.join(', ')}). ` +
+      'Allow the run to resume?';
+    const messageId = ensureAgentMessage(
+      run.threadId,
+      run.id,
+      `Containment alert: ${escape.reason}. Paths: ${escape.paths.join(', ')}`,
+    );
+    const card = store.cards.create({
+      messageId,
+      type: 'decision',
+      payload: {
+        question,
+        options: [
+          { value: 'resume', label: 'Resume run' },
+          { value: 'stop', label: 'Stop run' },
+        ],
+      },
+    });
+    entry.hasDecision = true;
+    emitter.emit(cardChannel(run.id), card);
+    try {
+      entry.handle.stop();
+    } catch {
+      // best-effort: handle.stop already idempotent
+    }
   }
 
   async function start(input: StartRunInput): Promise<AgentRun> {

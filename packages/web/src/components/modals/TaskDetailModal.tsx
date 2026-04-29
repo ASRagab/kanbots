@@ -1198,6 +1198,32 @@ function EventRow({ event }: { event: AgentEvent }) {
       </div>
     );
   }
+  if (event.type === 'containment_warning') {
+    const p = event.payload as {
+      tool?: string;
+      reason?: string;
+      paths?: string[];
+      heuristic?: boolean;
+      mode?: string;
+    };
+    const arg =
+      `${p.tool ?? 'tool'} → ${(p.paths ?? []).join(', ') || '(unknown path)'}` +
+      (p.heuristic ? ' (heuristic)' : '');
+    return (
+      <div
+        className="kb-tcall"
+        style={{ borderColor: 'var(--warning, #c47a00)', background: 'color-mix(in oklch, var(--bg-1) 80%, #c47a0033)' }}
+      >
+        <div className="kb-tcall-head">
+          <span className="name" style={{ color: 'var(--warning, #c47a00)' }}>
+            ⚠ containment {p.mode === 'pause' ? 'pause' : 'warn'}
+          </span>
+          <span className="arg" title={p.reason}>{arg}</span>
+          <span className="dur">{ageString(event.createdAt)} ago</span>
+        </div>
+      </div>
+    );
+  }
   return null;
 }
 

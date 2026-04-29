@@ -78,12 +78,17 @@ export interface DecisionPayload {
   options: Array<{ value: string; label: string }>;
 }
 
+export type ContainmentMode = 'off' | 'warn' | 'pause';
+
 export interface Config {
   owner: string;
   repo: string;
   mode?: 'github' | 'local';
   repoPath?: string;
   authorLogin?: string;
+  /** How to react when an agent's tool_use targets a path outside its
+   *  worktree. Default: 'warn'. */
+  containmentMode?: ContainmentMode;
 }
 
 export interface DraftIssueInput {

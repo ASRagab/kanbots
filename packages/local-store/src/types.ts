@@ -18,7 +18,12 @@ export type AgentRunStatus =
   | 'failed'
   | 'stopped';
 
-export type AgentEventType = 'tool_use' | 'tool_result' | 'text' | 'error';
+export type AgentEventType =
+  | 'tool_use'
+  | 'tool_result'
+  | 'text'
+  | 'error'
+  | 'containment_warning';
 
 export type PromotionKind = 'comment' | 'pull_request';
 

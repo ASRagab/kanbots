@@ -64,6 +64,13 @@ export {
 } from './checks.js';
 
 export {
+  inspectToolUse,
+  type ContainmentEscape,
+  type InspectToolUseInput,
+  type InspectToolUseResult,
+} from './containment.js';
+
+export {
   startPreview,
   type PreviewHandle,
   type StartPreviewOptions,

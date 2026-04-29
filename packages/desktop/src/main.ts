@@ -267,9 +267,13 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     restartPoller: () => sentryPoller.restart(),
   };
 
+  const containmentEnv = process.env.KANBOTS_CONTAINMENT_MODE;
+  const containmentMode: 'off' | 'warn' | 'pause' =
+    containmentEnv === 'off' || containmentEnv === 'pause' ? containmentEnv : 'warn';
   const rawSupervisor = await createSupervisor({
     store,
     repoPath: gitRoot,
+    containmentMode,
     onRunComplete: async (run) => {
       try {
         const thread = store.threads.findById(run.threadId);
@@ -307,6 +311,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
           owner: config.owner,
           repo: config.repo,
           repoPath: gitRoot,
+          containmentMode,
         }
       : {
           mode: 'local' as const,
@@ -314,6 +319,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
           repo: config.name,
           repoPath: gitRoot,
           authorLogin: config.authorLogin,
+          containmentMode,
         };
 
   const cooldownUnsub = supervisor.subscribeCooldown((state) => {
