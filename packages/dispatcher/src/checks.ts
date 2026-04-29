@@ -38,6 +38,20 @@ export function defaultCheckCommand(kind: CheckKind): CheckCommand {
   }
 }
 
+export type CheckCommandOverride = { command: string; args: string[] };
+export type CheckCommandOverrides = Partial<Record<CheckKind, CheckCommandOverride>>;
+
+export function resolveCheckCommand(
+  kind: CheckKind,
+  overrides?: CheckCommandOverrides | null,
+): CheckCommand {
+  const override = overrides?.[kind];
+  if (override && typeof override.command === 'string' && Array.isArray(override.args)) {
+    return { kind, command: override.command, args: [...override.args] };
+  }
+  return defaultCheckCommand(kind);
+}
+
 export async function runCheck(opts: RunCheckOptions): Promise<CheckResult> {
   const spawn = opts.spawn ?? nodeSpawn;
   const start = Date.now();
