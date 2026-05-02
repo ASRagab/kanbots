@@ -1,7 +1,20 @@
 {
   "name": "@kanbots/api",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Pure handler library and agent supervisor for kanbots (no HTTP server)",
+  "license": "MIT",
+  "author": "Leonardo Cunha",
+  "homepage": "https://github.com/leodavinci1/kanbots#readme",
+  "bugs": "https://github.com/leodavinci1/kanbots/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leodavinci1/kanbots.git",
+    "directory": "packages/api"
+  },
+  "keywords": ["kanbots", "handlers", "ipc"],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +30,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
   },
   "dependencies": {
     "@kanbots/core": "workspace:*",

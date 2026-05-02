@@ -19,7 +19,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "desktop": "pnpm --filter @kanbots/desktop launch",
-    "desktop:dev": "pnpm --filter @kanbots/desktop dev"
+    "desktop:dev": "pnpm --filter @kanbots/desktop dev",
+    "release:dry": "pnpm -r publish --access public --dry-run --no-git-checks",
+    "release": "pnpm -r publish --access public"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
