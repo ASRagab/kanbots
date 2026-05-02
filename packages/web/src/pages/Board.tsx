@@ -15,6 +15,7 @@ import { AutopilotLaunchModal } from '../components/modals/AutopilotLaunchModal.
 import { CardPreview } from '../components/Card.js';
 import { Column } from '../components/Column.js';
 import { PersonaPickerModal } from '../components/modals/PersonaPickerModal.js';
+import { HouseRulesSettingsModal } from '../components/modals/HouseRulesSettingsModal.js';
 import { ProvidersSettingsModal } from '../components/modals/ProvidersSettingsModal.js';
 import { SentrySettingsModal } from '../components/modals/SentrySettingsModal.js';
 import { useBoardAgentStreams } from '../hooks/useBoardAgentStreams.js';
@@ -164,9 +165,18 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [sentrySettingsOpen, setSentrySettingsOpen] = useState(false);
   const [providersSettingsOpen, setProvidersSettingsOpen] = useState(false);
+  const [houseRulesOpen, setHouseRulesOpen] = useState(false);
   const [selectedNumber, setSelectedNumber] = useSelection();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  useEffect(() => {
+    function onOpen(): void {
+      setHouseRulesOpen(true);
+    }
+    window.addEventListener('kanbots:open-house-rules', onOpen);
+    return () => window.removeEventListener('kanbots:open-house-rules', onOpen);
+  }, []);
 
   const list = filterApi.filtered;
   const activeRunIds = useMemo(
@@ -333,6 +343,15 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
           <button
             type="button"
             className="kb-btn ghost"
+            onClick={() => setHouseRulesOpen(true)}
+            title="Workspace house rules — prepended to every run"
+            aria-label="House rules"
+          >
+            Rules
+          </button>
+          <button
+            type="button"
+            className="kb-btn ghost"
             onClick={() => setSentrySettingsOpen(true)}
             title="Sentry integration settings"
             aria-label="Sentry settings"
@@ -490,6 +509,9 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
       ) : null}
       {sentrySettingsOpen ? (
         <SentrySettingsModal onClose={() => setSentrySettingsOpen(false)} />
+      ) : null}
+      {houseRulesOpen ? (
+        <HouseRulesSettingsModal onClose={() => setHouseRulesOpen(false)} />
       ) : null}
     </DndContext>
   );

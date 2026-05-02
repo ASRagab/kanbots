@@ -69,6 +69,7 @@ export type {
   Workspace,
   WorkspaceBudgets,
   WorkspaceFolderPayload,
+  WorkspaceHouseRules,
 } from '@kanbots/api';
 
 // User shape isn't in @kanbots/api directly — it's the inline type on

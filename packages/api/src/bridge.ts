@@ -402,6 +402,10 @@ export interface WorkspaceBudgets {
   sessionCostBudgetUsd: number | null;
 }
 
+export interface WorkspaceHouseRules {
+  houseRules: string | null;
+}
+
 export interface WorkspaceFolderPayload {
   id: string;
   workspaceId: string;
@@ -589,6 +593,11 @@ export interface BridgeChannels {
   'workspace:set-budgets': {
     args: { runCostBudgetUsd: number | null; sessionCostBudgetUsd: number | null };
     result: WorkspaceBudgets;
+  };
+  'workspace:get-house-rules': { args: void; result: WorkspaceHouseRules };
+  'workspace:set-house-rules': {
+    args: { houseRules: string | null };
+    result: WorkspaceHouseRules;
   };
   'folders:list': { args: void; result: WorkspaceFolderPayload[] };
   'folders:add': {

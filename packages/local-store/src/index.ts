@@ -123,6 +123,7 @@ export {
   ensureGitignoreEntry,
   ensureKanbotsDir,
   findGitRoot,
+  HOUSE_RULES_MAX_BYTES,
   readWorkspaceConfig,
   resolveGitUserName,
   writeWorkspaceConfig,

@@ -103,6 +103,8 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'workspace:get': () => workspace.getWorkspace(deps),
     'workspace:get-budgets': () => workspace.getBudgets(deps),
     'workspace:set-budgets': (args) => workspace.setBudgets(deps, args),
+    'workspace:get-house-rules': () => workspace.getHouseRules(deps),
+    'workspace:set-house-rules': (args) => workspace.setHouseRules(deps, args),
     'folders:list': () => workspace.listFolders(deps),
     'folders:add': (args) => workspace.addFolder(deps, args),
     'composer:draft': (args) => composer.draft(deps, args),

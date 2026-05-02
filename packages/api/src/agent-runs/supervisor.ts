@@ -62,6 +62,13 @@ export interface CreateSupervisorOptions {
    * to workspace defaults take effect on subsequent runs).
    */
   defaultRunCostBudgetUsd?: number | null | (() => number | null | undefined);
+  /**
+   * Workspace-wide rules prepended to the system prompt of every run started
+   * via the supervisor (issue runs, chat runs, autopilot child runs). Pass a
+   * function to read it dynamically so edits take effect on the next run. An
+   * empty/whitespace-only value is treated as "no rules".
+   */
+  houseRules?: string | null | (() => string | null | undefined);
   onRunComplete?: (run: AgentRun) => Promise<void> | void;
   /**
    * Maximum time to wait after SIGTERM before escalating to SIGKILL during stop().
@@ -358,12 +365,25 @@ export async function createSupervisor(
     });
   }
 
+  function readHouseRules(): string | null {
+    const raw = opts.houseRules;
+    const value = typeof raw === 'function' ? raw() : raw;
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
   function composeSystemPrompt(
     currentRunId: number,
     extra: string | undefined,
   ): { prompt: string; briefing: string | null } {
     const briefing = renderSiblingBriefing(store, currentRunId);
-    const parts = [decisionInstructions];
+    const houseRules = readHouseRules();
+    const parts: string[] = [];
+    if (houseRules) {
+      parts.push(`WORKSPACE_RULES — apply to every turn:\n${houseRules}`);
+    }
+    parts.push(decisionInstructions);
     if (briefing) parts.push(briefing);
     if (extra) parts.push(extra);
     return { prompt: parts.join('\n\n'), briefing };

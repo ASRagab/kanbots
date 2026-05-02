@@ -33,7 +33,15 @@ export type CheckCommandOverrides = Partial<Record<CheckCommandKind, CheckComman
 
 interface WorkspaceConfigCommon {
   checks?: CheckCommandOverrides;
+  /**
+   * Workspace-wide rules prepended to every agent prompt (issue runs, chat
+   * runs, autopilot child runs). Stored verbatim; trimmed on read. Capped at
+   * HOUSE_RULES_MAX_BYTES to keep system-prompt overhead bounded.
+   */
+  houseRules?: string;
 }
+
+export const HOUSE_RULES_MAX_BYTES = 8 * 1024;
 
 export interface GitHubWorkspaceConfig extends WorkspaceConfigCommon {
   mode: 'github';
@@ -129,11 +137,13 @@ function validateConfig(input: unknown): WorkspaceConfig | null {
   const defaults = parseDefaults(obj.defaults);
   const checks = validateCheckOverrides(obj.checks);
   const notify = typeof obj.notifyOnRunComplete === 'boolean' ? obj.notifyOnRunComplete : undefined;
+  const houseRules = validateHouseRules(obj.houseRules);
   if (obj.mode === 'github' && typeof obj.owner === 'string' && typeof obj.repo === 'string') {
     const cfg: GitHubWorkspaceConfig = { mode: 'github', owner: obj.owner, repo: obj.repo };
     if (defaults) cfg.defaults = defaults;
     if (checks) cfg.checks = checks;
     if (notify !== undefined) cfg.notifyOnRunComplete = notify;
+    if (houseRules !== undefined) cfg.houseRules = houseRules;
     return cfg;
   }
   if (obj.mode === 'local' && typeof obj.name === 'string' && typeof obj.authorLogin === 'string') {
@@ -141,9 +151,27 @@ function validateConfig(input: unknown): WorkspaceConfig | null {
     if (defaults) cfg.defaults = defaults;
     if (checks) cfg.checks = checks;
     if (notify !== undefined) cfg.notifyOnRunComplete = notify;
+    if (houseRules !== undefined) cfg.houseRules = houseRules;
     return cfg;
   }
   return null;
+}
+
+function validateHouseRules(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'string') {
+    console.warn('[kanbots] ignoring invalid `houseRules` field in .kanbots/config.json (expected string)');
+    return undefined;
+  }
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return undefined;
+  if (Buffer.byteLength(trimmed, 'utf8') > HOUSE_RULES_MAX_BYTES) {
+    console.warn(
+      `[kanbots] ignoring \`houseRules\` exceeding ${HOUSE_RULES_MAX_BYTES} bytes; rules will not be applied`,
+    );
+    return undefined;
+  }
+  return trimmed;
 }
 
 function parseDefaults(input: unknown): WorkspaceDefaults | null {

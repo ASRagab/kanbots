@@ -40,6 +40,7 @@ import type {
   Workspace,
   WorkspaceBudgets,
   WorkspaceFolderPayload,
+  WorkspaceHouseRules,
 } from './types.js';
 
 export type { PostMessageResult, UploadAttachmentResult } from './global.js';
@@ -206,6 +207,10 @@ export const api = {
     invoke('workspace:get-budgets', undefined),
   setWorkspaceBudgets: (input: WorkspaceBudgets): Promise<WorkspaceBudgets> =>
     invoke('workspace:set-budgets', input),
+  getWorkspaceHouseRules: (): Promise<WorkspaceHouseRules> =>
+    invoke('workspace:get-house-rules', undefined),
+  setWorkspaceHouseRules: (input: WorkspaceHouseRules): Promise<WorkspaceHouseRules> =>
+    invoke('workspace:set-house-rules', input),
   listFolders: (): Promise<WorkspaceFolderPayload[]> => invoke('folders:list', undefined),
   addFolder: (input: {
     name: string;

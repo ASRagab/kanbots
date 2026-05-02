@@ -147,6 +147,11 @@ async function pruneMissingRecents(): Promise<RecentWorkspace[]> {
   return present;
 }
 
+function stripHouseRules(config: WorkspaceConfig): WorkspaceConfig {
+  const { houseRules: _omit, ...rest } = config;
+  return rest as WorkspaceConfig;
+}
+
 async function ensureLocalWorkspace(repoPath: string): Promise<WorkspaceConfig> {
   const existing = await readWorkspaceConfig(repoPath);
   if (existing) return existing;
@@ -293,7 +298,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
   }
 
   await ensureKanbotsDir(gitRoot);
-  const config = await ensureLocalWorkspace(gitRoot);
+  let config = await ensureLocalWorkspace(gitRoot);
 
   await closeActiveWorkspace();
 
@@ -351,11 +356,16 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     sessionCostBudgetUsd: config.defaults?.sessionCostBudgetUsd ?? null,
   };
 
+  const houseRulesState = {
+    houseRules: config.houseRules ?? null,
+  };
+
   const rawSupervisor = await createSupervisor({
     store,
     repoPath: gitRoot,
     containmentMode,
     defaultRunCostBudgetUsd: () => budgetsState.runCostBudgetUsd,
+    houseRules: () => houseRulesState.houseRules,
     onRunStatusChange: async (run) => {
       try {
         await maybeNotifyRunStatus(run, store, source);
@@ -503,6 +513,22 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
               ? { ...config, defaults }
               : { ...config, defaults };
           await writeWorkspaceConfig(gitRoot, next);
+          config = next;
+          if (activeWorkspace && activeWorkspace.repoPath === gitRoot) {
+            activeWorkspace.config = next;
+          }
+        },
+      },
+      houseRules: {
+        get: () => ({ houseRules: houseRulesState.houseRules }),
+        set: async (input) => {
+          houseRulesState.houseRules = input.houseRules;
+          const next: WorkspaceConfig =
+            input.houseRules === null
+              ? stripHouseRules(config)
+              : { ...config, houseRules: input.houseRules };
+          await writeWorkspaceConfig(gitRoot, next);
+          config = next;
           if (activeWorkspace && activeWorkspace.repoPath === gitRoot) {
             activeWorkspace.config = next;
           }

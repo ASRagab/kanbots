@@ -55,6 +55,28 @@ export function RunSummary({ run, layout = 'inspector', onRunChecks }: RunSummar
   const [checks, setChecks] = useState<AgentCheck[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [commands, setCommands] = useState<CheckCommandsMap | null>(null);
+  const [houseRulesActive, setHouseRulesActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load(): void {
+      api
+        .getWorkspaceHouseRules()
+        .then((res) => {
+          if (!cancelled) setHouseRulesActive(res.houseRules !== null);
+        })
+        .catch(() => undefined);
+    }
+    load();
+    function onUpdate(): void {
+      load();
+    }
+    window.addEventListener('kanbots:house-rules-updated', onUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('kanbots:house-rules-updated', onUpdate);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +163,20 @@ export function RunSummary({ run, layout = 'inspector', onRunChecks }: RunSummar
           <span className="kb-run-label">Agent {STATUS_LABEL[status] ?? status}</span>
           <span className="kb-run-id">run #{run.id}</span>
           <span className="kb-run-elapsed">{fmtElapsed(run.startedAt, run.endedAt)}</span>
+          {houseRulesActive ? (
+            <button
+              type="button"
+              className="kb-pill"
+              style={{ marginLeft: 'auto', cursor: 'pointer' }}
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent('kanbots:open-house-rules'))
+              }
+              title="House rules from .kanbots/config.json are prepended to this run's system prompt. Click to edit."
+              aria-label="House rules in effect"
+            >
+              House rules
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="kb-run-stats">

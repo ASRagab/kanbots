@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import type { Workspace, WorkspaceBudgets, WorkspaceFolderPayload } from '../bridge.js';
+import { HOUSE_RULES_MAX_BYTES } from '@kanbots/local-store';
+import type {
+  Workspace,
+  WorkspaceBudgets,
+  WorkspaceFolderPayload,
+  WorkspaceHouseRules,
+} from '../bridge.js';
 import { bootstrapWorkspace } from '../workspace-bootstrap.js';
 import { badRequest, parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
@@ -79,6 +85,40 @@ export async function setBudgets(
   }
   await deps.budgets.set(parsed);
   return deps.budgets.get();
+}
+
+const setHouseRulesSchema = z
+  .object({
+    houseRules: z.string().nullable(),
+  })
+  .strict();
+
+export async function getHouseRules(deps: HandlerDeps): Promise<WorkspaceHouseRules> {
+  if (!deps.houseRules) return { houseRules: null };
+  return deps.houseRules.get();
+}
+
+export async function setHouseRules(
+  deps: HandlerDeps,
+  args: WorkspaceHouseRules,
+): Promise<WorkspaceHouseRules> {
+  const parsed = parseArgs(setHouseRulesSchema, args);
+  if (!deps.houseRules) throw badRequest('host has no active workspace');
+  let next: string | null;
+  if (parsed.houseRules === null) {
+    next = null;
+  } else {
+    const trimmed = parsed.houseRules.trim();
+    if (trimmed.length === 0) {
+      next = null;
+    } else if (Buffer.byteLength(trimmed, 'utf8') > HOUSE_RULES_MAX_BYTES) {
+      throw badRequest(`houseRules exceeds ${HOUSE_RULES_MAX_BYTES} bytes`);
+    } else {
+      next = trimmed;
+    }
+  }
+  await deps.houseRules.set({ houseRules: next });
+  return deps.houseRules.get();
 }
 
 export async function addFolder(
