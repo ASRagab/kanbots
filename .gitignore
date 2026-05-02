@@ -20,3 +20,5 @@ claude-code-main.zip
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+codex-main/
+design_plan/
