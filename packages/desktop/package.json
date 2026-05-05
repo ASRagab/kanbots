@@ -5,7 +5,7 @@
   "description": "kanbots desktop app (Electron)",
   "main": "./dist/main.cjs",
   "scripts": {
-    "build:deps": "pnpm --filter \"@kanbots/desktop^...\" build",
+    "build:deps": "pnpm --filter \"@kanbots/desktop^...\" --workspace-concurrency=1 build",
     "build:main": "tsup",
     "build:web": "pnpm --filter @kanbots/web build",
     "copy:web": "node scripts/copy-web.cjs",
