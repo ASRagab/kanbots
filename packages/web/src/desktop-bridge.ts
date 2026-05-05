@@ -25,6 +25,7 @@ export interface BootstrapPayload {
   workspace: ActiveWorkspaceInfo | null;
   recents: RecentWorkspace[];
   claudeAuthed: boolean;
+  codexAuthed: boolean;
 }
 
 export function getBridge(): NonNullable<Window['kanbots']> | null {

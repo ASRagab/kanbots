@@ -32,10 +32,17 @@ async function bootstrap(): Promise<{
   recents: RecentWorkspace[];
   hasBridge: boolean;
   claudeAuthed: boolean;
+  codexAuthed: boolean;
 }> {
   const bridge = getBridge();
   if (!bridge) {
-    return { workspace: null, recents: [], hasBridge: false, claudeAuthed: true };
+    return {
+      workspace: null,
+      recents: [],
+      hasBridge: false,
+      claudeAuthed: true,
+      codexAuthed: true,
+    };
   }
   const payload = await bridge.bootstrap();
   return {
@@ -43,6 +50,7 @@ async function bootstrap(): Promise<{
     recents: payload.recents,
     hasBridge: true,
     claudeAuthed: payload.claudeAuthed,
+    codexAuthed: payload.codexAuthed,
   };
 }
 
@@ -67,7 +75,7 @@ if (isChatWindow) {
     </StrictMode>,
   );
 } else {
-  void bootstrap().then(({ workspace, recents, hasBridge, claudeAuthed }) => {
+  void bootstrap().then(({ workspace, recents, hasBridge, claudeAuthed, codexAuthed }) => {
     root.render(
       <StrictMode>
         <ErrorBoundary>
@@ -76,6 +84,7 @@ if (isChatWindow) {
             initialRecents={recents}
             hasBridge={hasBridge}
             initialClaudeAuthed={claudeAuthed}
+            initialCodexAuthed={codexAuthed}
           />
         </ErrorBoundary>
       </StrictMode>,

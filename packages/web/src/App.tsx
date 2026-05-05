@@ -27,6 +27,7 @@ interface AppProps {
   initialRecents: RecentWorkspace[];
   hasBridge: boolean;
   initialClaudeAuthed: boolean;
+  initialCodexAuthed: boolean;
 }
 
 function describeFolder(config: Config | null): string {
@@ -224,7 +225,13 @@ function ShellHost({
   );
 }
 
-export function App({ workspace, initialRecents, hasBridge, initialClaudeAuthed }: AppProps) {
+export function App({
+  workspace,
+  initialRecents,
+  hasBridge,
+  initialClaudeAuthed,
+  initialCodexAuthed,
+}: AppProps) {
   const [providersTick, setProvidersTick] = useState(0);
   const { data: config } = useFetch(workspace ? 'config' : null, () => api.config());
   const { data: providers } = useFetch(
@@ -242,10 +249,12 @@ export function App({ workspace, initialRecents, hasBridge, initialClaudeAuthed 
 
   // Providers gate. The overlay is non-dismissible — the kanban renders
   // behind it but can't be interacted with until at least one provider is
-  // configured. `initialClaudeAuthed` is still surfaced so a fresh install
-  // with Claude Code already signed in unblocks immediately on next reload.
+  // configured. The initial auth flags are surfaced so a fresh install with
+  // either Claude Code or codex-cli already signed in unblocks immediately
+  // before the providers query resolves.
   const anyConfigured =
-    providers?.anyConfigured ?? (hasBridge ? initialClaudeAuthed : true);
+    providers?.anyConfigured ??
+    (hasBridge ? initialClaudeAuthed || initialCodexAuthed : true);
 
   if (hasBridge && !anyConfigured) {
     return (

@@ -128,7 +128,12 @@ function readPayload(deps: HandlerDeps): ProvidersPayload {
     lastError: row.lastError,
   }));
 
-  const anyConfigured = providers.some((p) => p.enabled && p.hasKey);
+  // `hasKey` reflects detected CLI credentials (~/.claude/.credentials.json,
+  // ~/.codex/auth.json, or OPENAI_API_KEY). If either CLI is signed in we
+  // treat the app as configured even when the provider row hasn't been
+  // explicitly toggled on — the supervisor falls back to claude-code and the
+  // overlay is just there to nudge first-time users.
+  const anyConfigured = providers.some((p) => p.hasKey);
 
   return {
     providers,

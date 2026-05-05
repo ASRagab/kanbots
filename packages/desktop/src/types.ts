@@ -16,6 +16,7 @@ export interface BootstrapPayload {
   workspace: ActiveWorkspaceInfo | null;
   recents: RecentWorkspace[];
   claudeAuthed: boolean;
+  codexAuthed: boolean;
 }
 
 export interface KanbotsBridge {

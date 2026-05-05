@@ -44,6 +44,7 @@ import {
 } from './claude-auth.js';
 import {
   cancelCodexLogin,
+  CODEX_AUTH_PATH,
   isCodexAuthenticated,
   startCodexLogin,
 } from './codex-auth.js';
@@ -688,10 +689,16 @@ function registerIpc(): void {
       pruneMissingRecents(),
       isClaudeAuthenticated(),
     ]);
+    // Cheap file/env probe — `codex login status` would shell out and can
+    // take seconds. The deeper check still runs via `kanbots:codex-auth-status`
+    // and via the providers handler once the renderer queries it.
+    const codexAuthed =
+      existsSync(CODEX_AUTH_PATH) || Boolean(process.env.OPENAI_API_KEY);
     return {
       workspace: activeWorkspaceInfo(),
       recents,
       claudeAuthed,
+      codexAuthed,
     };
   });
 

@@ -62,6 +62,7 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
         workspace: null,
         recents: [],
         claudeAuthed: true,
+        codexAuthed: true,
       }),
     pickFolder: () => Promise.resolve(null),
     openWorkspace: () => Promise.resolve({ ok: true }),

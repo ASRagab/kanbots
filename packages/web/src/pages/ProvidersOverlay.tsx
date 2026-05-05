@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { ProvidersSettingsModal } from '../components/modals/ProvidersSettingsModal.js';
 import { getBridge } from '../desktop-bridge.js';
 
 export interface ProvidersOverlayProps {
@@ -8,6 +7,8 @@ export interface ProvidersOverlayProps {
   onConfigured: () => void;
 }
 
+type Pending = 'claude' | 'codex' | null;
+
 /**
  * Non-dismissible overlay shown when no AI provider is configured (or all
  * configured providers failed validation on startup). Spec: high-contrast
@@ -15,20 +16,22 @@ export interface ProvidersOverlayProps {
  * remain disabled until at least one provider is configured.
  */
 export function ProvidersOverlay({ reason, onConfigured }: ProvidersOverlayProps) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function signInWithClaude(): Promise<void> {
+  async function signIn(provider: 'claude' | 'codex'): Promise<void> {
     const bridge = getBridge();
     if (!bridge) {
       setError('Desktop bridge not available — open the desktop app instead.');
       return;
     }
-    setBusy(true);
+    setPending(provider);
     setError(null);
-    const result = await bridge.claudeLoginStart();
-    setBusy(false);
+    const result =
+      provider === 'claude'
+        ? await bridge.claudeLoginStart()
+        : await bridge.codexLoginStart();
+    setPending(null);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -58,24 +61,25 @@ export function ProvidersOverlay({ reason, onConfigured }: ProvidersOverlayProps
           </h1>
           <p className="kb-providers-overlay-body">
             {reason === 'all-failed'
-              ? 'Every configured provider failed validation. Open settings to update keys or sign in again.'
-              : 'Sign in with your Claude Code subscription, or paste an API key for Anthropic, OpenAI, Gemini, DeepSeek, or Grok to continue.'}
+              ? 'Every configured provider failed validation. Sign in again to continue.'
+              : 'Sign in with your Claude Code or Codex subscription to continue.'}
           </p>
           <div className="kb-providers-overlay-actions">
             <button
               type="button"
               className="kb-btn primary"
-              onClick={() => void signInWithClaude()}
-              disabled={busy}
+              onClick={() => void signIn('claude')}
+              disabled={pending !== null}
             >
-              {busy ? 'Waiting for browser…' : 'Sign in with Claude Code'}
+              {pending === 'claude' ? 'Waiting for browser…' : 'Sign in with Claude Code'}
             </button>
             <button
               type="button"
-              className="kb-btn ghost"
-              onClick={() => setSettingsOpen(true)}
+              className="kb-btn primary"
+              onClick={() => void signIn('codex')}
+              disabled={pending !== null}
             >
-              Use an API key
+              {pending === 'codex' ? 'Waiting for browser…' : 'Sign in with Codex'}
             </button>
           </div>
           {error ? (
@@ -85,14 +89,6 @@ export function ProvidersOverlay({ reason, onConfigured }: ProvidersOverlayProps
           ) : null}
         </div>
       </div>
-      {settingsOpen ? (
-        <ProvidersSettingsModal
-          onClose={() => {
-            setSettingsOpen(false);
-            onConfigured();
-          }}
-        />
-      ) : null}
     </>
   );
 }
