@@ -35,6 +35,17 @@ export {
 export { dispatchChatTool } from './chat-tools-dispatch.js';
 
 export {
+  createCurator,
+  CuratorError,
+  CURATOR_JSON_SCHEMA,
+  CURATOR_SYSTEM_PROMPT,
+  renderCuratorPrompt,
+  type CreateCuratorOptions,
+  type CuratorOutcome,
+  type CuratorSpawnFn,
+} from './curator/index.js';
+
+export {
   createHandlers,
   type ChatToolRuntime,
   type CreateHandlersOptions,

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron';
 import {
   createAutopilotManager,
+  createCurator,
   createHandlers,
   createSupervisor,
   dispatchChatTool,
@@ -355,6 +356,11 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     houseRules: config.houseRules ?? null,
   };
 
+  // Curator runs after every successful agent run on this workspace, distilling
+  // events into durable learnings. Cheap by default (Haiku, per-day budget cap)
+  // and gracefully no-ops when the run signal isn't `completed_clean`/`promoted`.
+  const curator = createCurator({ store, cwd: gitRoot });
+
   const rawSupervisor = await createSupervisor({
     store,
     repoPath: gitRoot,
@@ -369,7 +375,12 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
       }
     },
     onRunComplete: async (run) => {
-      try {
+      // Two best-effort tasks fan out from a successful run:
+      //   1. Mirror the run's outcome onto the issue's labels (status:review,
+      //      agent:idle).
+      //   2. Dispatch the memory-ledger curator so this run feeds future ones.
+      // Both run in parallel; failures of either are logged-and-swallowed.
+      const labelTask = (async () => {
         const thread = store.threads.findById(run.threadId);
         if (!thread) return;
         const issue = await source.getIssue(thread.issueNumber);
@@ -379,9 +390,13 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
         );
         labels.push('status:review', 'agent:idle');
         await source.updateIssue(thread.issueNumber, { labels });
-      } catch {
-        // best-effort: don't let label errors crash the supervisor
-      }
+      })().catch(() => {
+        // label errors must not crash the supervisor hook
+      });
+      const curatorTask = curator(run).catch(() => {
+        // curator failures must not crash the supervisor hook
+      });
+      await Promise.allSettled([labelTask, curatorTask]);
     },
   });
   const supervisor = wrapNotifyingSupervisor(rawSupervisor);

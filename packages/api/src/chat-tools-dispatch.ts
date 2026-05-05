@@ -119,6 +119,58 @@ export const dispatchChatTool: ToolDispatcher = async (name, rawArgs, handlers) 
     case 'listPendingDecisions': {
       return handlers['decisions:pending']();
     }
+    case 'listLearnings': {
+      const repoOwner = expectString(args, 'repoOwner');
+      const repoName = expectString(args, 'repoName');
+      const tag = optionalString(args, 'tag') as
+        | 'convention' | 'gotcha' | 'fragile' | 'decision-rationale' | undefined;
+      const includeDeleted = optionalBoolean(args, 'includeDeleted');
+      const limit = optionalNumber(args, 'limit');
+      const payload: Parameters<(typeof handlers)['learnings:list']>[0] = {
+        repoOwner,
+        repoName,
+      };
+      if (tag) payload.tag = tag;
+      if (typeof includeDeleted === 'boolean') payload.includeDeleted = includeDeleted;
+      if (typeof limit === 'number') payload.limit = limit;
+      return handlers['learnings:list'](payload);
+    }
+    case 'pinLearning': {
+      const id = expectNumber(args, 'id');
+      const pinned = optionalBoolean(args, 'pinned');
+      if (typeof pinned !== 'boolean') {
+        throw new Error("missing or invalid 'pinned' (expected boolean)");
+      }
+      return handlers['learnings:pin']({ id, pinned });
+    }
+    case 'deleteLearning': {
+      const id = expectNumber(args, 'id');
+      return handlers['learnings:delete']({ id });
+    }
+    case 'updateLearning': {
+      const id = expectNumber(args, 'id');
+      const content = expectString(args, 'content');
+      return handlers['learnings:update']({ id, content });
+    }
+    case 'getPerformanceMetrics': {
+      const repoOwner = optionalString(args, 'repoOwner');
+      const repoName = optionalString(args, 'repoName');
+      const sinceDays = optionalNumber(args, 'sinceDays');
+      const cardKind = optionalString(args, 'cardKind');
+      const cardSizeBucket = optionalString(args, 'cardSizeBucket');
+      const payload: Parameters<(typeof handlers)['analytics:rollup']>[0] = {};
+      if (repoOwner) payload.repoOwner = repoOwner;
+      if (repoName) payload.repoName = repoName;
+      if (typeof sinceDays === 'number') {
+        const ms = sinceDays * 24 * 60 * 60 * 1000;
+        payload.sinceTs = new Date(Date.now() - ms).toISOString();
+      } else {
+        payload.sinceTs = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      }
+      if (cardKind) payload.cardKind = cardKind;
+      if (cardSizeBucket) payload.cardSizeBucket = cardSizeBucket;
+      return handlers['analytics:rollup'](payload);
+    }
     default:
       throw new Error(`unknown tool: ${name}`);
   }
@@ -136,6 +188,33 @@ function expectString(args: Record<string, unknown>, key: string): string {
   const v = args[key];
   if (typeof v !== 'string' || v.length === 0) {
     throw new Error(`missing or invalid '${key}' (expected string)`);
+  }
+  return v;
+}
+
+function optionalString(args: Record<string, unknown>, key: string): string | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string') {
+    throw new Error(`invalid '${key}' (expected string)`);
+  }
+  return v;
+}
+
+function optionalNumber(args: Record<string, unknown>, key: string): number | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    throw new Error(`invalid '${key}' (expected number)`);
+  }
+  return v;
+}
+
+function optionalBoolean(args: Record<string, unknown>, key: string): boolean | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'boolean') {
+    throw new Error(`invalid '${key}' (expected boolean)`);
   }
   return v;
 }

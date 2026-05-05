@@ -185,6 +185,90 @@ export const KANBOTS_TOOLS: readonly ToolDef[] = [
       'List every pending decision card across the workspace so the agent can resolve them on the user\'s behalf.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
   },
+  {
+    name: 'listLearnings',
+    description:
+      'List durable lessons curated from past runs in this repo (the "Repo Brain"). Returns convention/gotcha/fragile/decision-rationale entries that future agents should know.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        repoOwner: { type: 'string' },
+        repoName: { type: 'string' },
+        tag: {
+          type: 'string',
+          enum: ['convention', 'gotcha', 'fragile', 'decision-rationale'],
+        },
+        includeDeleted: { type: 'boolean' },
+        limit: { type: 'integer', minimum: 1, maximum: 500 },
+      },
+      required: ['repoOwner', 'repoName'],
+    },
+  },
+  {
+    name: 'pinLearning',
+    description:
+      'Pin (or unpin) a learning so it always appears in the top of injection ranking.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'integer', minimum: 1 },
+        pinned: { type: 'boolean' },
+      },
+      required: ['id', 'pinned'],
+    },
+  },
+  {
+    name: 'deleteLearning',
+    description:
+      'Soft-delete a learning. The row is kept in the DB but excluded from injection and dedup.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'integer', minimum: 1 },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'updateLearning',
+    description: 'Edit the content of an existing learning. The hash is recomputed for dedup.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'integer', minimum: 1 },
+        content: { type: 'string', minLength: 10, maxLength: 2000 },
+      },
+      required: ['id', 'content'],
+    },
+  },
+  {
+    name: 'getPerformanceMetrics',
+    description:
+      'Get a per-(persona × model) rollup of runs in this workspace: counts, success rate, total/avg cost, avg duration. Filter by repo, time window, card kind, or card size to narrow scope.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        repoOwner: { type: 'string' },
+        repoName: { type: 'string' },
+        sinceDays: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 365,
+          description: 'Only include runs started in the last N days (default: 30).',
+        },
+        cardKind: { type: 'string' },
+        cardSizeBucket: {
+          type: 'string',
+          enum: ['xs', 's', 'm', 'l', 'xl'],
+        },
+      },
+    },
+  },
 ];
 
 export type ToolName = (typeof KANBOTS_TOOLS)[number]['name'];
