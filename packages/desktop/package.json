@@ -18,9 +18,9 @@
     "package:mac": "pnpm ensure:native && pnpm build && electron-builder --mac",
     "package:win": "pnpm ensure:native && pnpm build && electron-builder --win",
     "package:dir": "pnpm build && electron-builder --dir",
-    "release:linux": "pnpm ensure:native && pnpm build && electron-builder --linux --publish always",
-    "release:mac": "pnpm ensure:native && pnpm build && electron-builder --mac --publish always",
-    "release:win": "pnpm ensure:native && pnpm build && electron-builder --win --publish always",
+    "release:linux": "pnpm ensure:native && pnpm build && electron-builder --linux --publish never",
+    "release:mac": "pnpm ensure:native && pnpm build && electron-builder --mac --publish never",
+    "release:win": "pnpm ensure:native && pnpm build && electron-builder --win --publish never",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -85,7 +85,7 @@
         "tar.xz"
       ],
       "category": "Development",
-      "artifactName": "kanbots-${version}-linux-${arch}.${ext}"
+      "artifactName": "kanbots-${version}-linux-x64.${ext}"
     },
     "mac": {
       "target": [
@@ -120,15 +120,9 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
-      "artifactName": "kanbots-${version}-win-${arch}.${ext}"
+      "artifactName": "kanbots-${version}-win-x64.${ext}"
     },
     "nsis": {
       "oneClick": false,
