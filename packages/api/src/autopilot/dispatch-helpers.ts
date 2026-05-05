@@ -8,11 +8,14 @@ export interface DispatchAutopilotChildDeps {
 }
 
 export interface DispatchAutopilotChildArgs {
-  issue: Pick<Issue, 'number' | 'title' | 'body'>;
+  issue: Pick<Issue, 'number' | 'title' | 'body' | 'labels'>;
   threadId: number;
   model?: string;
   provider?: 'claude-code' | 'codex-cli';
   effort?: AutopilotEffort;
+  /** Persona id (not the display name) — recorded on the agent run for
+   *  per-persona analytics. */
+  personaId?: string;
 }
 
 export async function dispatchAutopilotChild(
@@ -20,6 +23,8 @@ export async function dispatchAutopilotChild(
   args: DispatchAutopilotChildArgs,
 ): Promise<AgentRun> {
   const kickoff = buildAutopilotKickoff(args.issue, args.effort);
+  const cardKind = inferCardKindFromLabels(args.issue.labels);
+  const issueBodyChars = args.issue.body ? args.issue.body.length : 0;
   const startInput: Parameters<AgentSupervisor['start']>[0] = {
     threadId: args.threadId,
     issueNumber: args.issue.number,
@@ -29,10 +34,27 @@ export async function dispatchAutopilotChild(
       title: args.issue.title,
       body: args.issue.body,
     }),
+    issueBodyChars,
   };
   if (args.model !== undefined) startInput.model = args.model;
   if (args.provider !== undefined) startInput.provider = args.provider;
+  if (args.personaId !== undefined) startInput.personaId = args.personaId;
+  if (cardKind !== null) startInput.cardKind = cardKind;
   return deps.supervisor.start(startInput);
+}
+
+/** Pull the kind from `type:*` labels at dispatch — autopilot tags every
+ *  child issue with `type:feat` or `type:bug`, so this is reliable for
+ *  autopilot-spawned runs. Returns null when nothing matches; analytics
+ *  then groups the run as "uncategorised". */
+function inferCardKindFromLabels(labels: readonly string[] | undefined): string | null {
+  if (!labels) return null;
+  for (const lbl of labels) {
+    if (typeof lbl === 'string' && lbl.startsWith('type:')) {
+      return lbl.slice('type:'.length);
+    }
+  }
+  return null;
 }
 
 const EFFORT_GUIDANCE: Record<AutopilotEffort, string> = {

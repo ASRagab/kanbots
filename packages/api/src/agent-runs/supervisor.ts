@@ -94,6 +94,16 @@ export interface StartRunInput {
   model?: string;
   provider?: import('@kanbots/dispatcher').AgentRunProvider;
   costBudgetUsd?: number | null;
+  /** Persona id when dispatched via autopilot. Recorded on agent_runs for
+   *  per-persona analytics. */
+  personaId?: string;
+  /** Coarse classification (e.g. `feat`, `bug`) derived from issue labels at
+   *  dispatch. Used to bucket runs in the analytics dashboard. */
+  cardKind?: string;
+  /** Raw issue body length captured at dispatch — used to compute the
+   *  card_size_bucket and kept around so thresholds can be re-tuned without
+   *  losing history. */
+  issueBodyChars?: number;
 }
 
 export interface ResumeRunInput {
@@ -568,6 +578,23 @@ export async function createSupervisor(
             ? `exit code ${summary.exitCode ?? 'null'}: ${truncate(summary.stderr, 500)}`
             : null;
 
+      // Terminal classification recorded for analytics + memory curator.
+      // Awaiting-input is non-terminal so we leave success_signal alone there;
+      // promotion can later upgrade `completed_clean` → `promoted`, and a
+      // failed check can downgrade it to `completed_with_failed_checks`.
+      const successSignal: import('@kanbots/local-store').SuccessSignal | null =
+        status === 'awaiting_input'
+          ? null
+          : entry.budgetExceeded
+            ? 'aborted_budget'
+            : summary.killedByStop
+              ? 'stopped'
+              : status === 'failed'
+                ? 'failed'
+                : status === 'complete'
+                  ? 'completed_clean'
+                  : null;
+
       const updated = store.agentRuns.update(run.id, {
         status,
         endedAt: status === 'awaiting_input' ? null : new Date().toISOString(),
@@ -590,6 +617,7 @@ export async function createSupervisor(
           ? { durationMs: summary.result.durationMs }
           : {}),
         ...(exitReason !== null ? { exitReason } : {}),
+        ...(successSignal !== null ? { successSignal } : {}),
       });
       if (status !== 'awaiting_input') {
         store.cards.dismissPendingDecisionsForRun(run.id);
@@ -789,6 +817,14 @@ export async function createSupervisor(
       ...(input.model !== undefined ? { model: input.model } : {}),
       provider,
       ...(budget !== null ? { costBudgetUsd: budget } : {}),
+      ...(input.personaId !== undefined ? { personaId: input.personaId } : {}),
+      ...(input.cardKind !== undefined ? { cardKind: input.cardKind } : {}),
+      ...(input.issueBodyChars !== undefined
+        ? {
+            issueBodyChars: input.issueBodyChars,
+            cardSizeBucket: computeCardSizeBucket(input.issueBodyChars),
+          }
+        : {}),
     });
     // Persist last-used model on the thread for the model picker default.
     store.threads.setLastModel(input.threadId, provider, input.model ?? null);
@@ -998,6 +1034,18 @@ function formatDecisionMessage(question: string): string {
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max)}…`;
+}
+
+/** Char-length-to-bucket mapping used as a coarse proxy for task size. The
+ *  buckets are static so backfilling can be done at any time using the raw
+ *  issue_body_chars column. Tuned for analytics grouping; not load-bearing
+ *  for routing decisions. */
+export function computeCardSizeBucket(chars: number): string {
+  if (chars < 500) return 'xs';
+  if (chars < 2_000) return 's';
+  if (chars < 8_000) return 'm';
+  if (chars < 30_000) return 'l';
+  return 'xl';
 }
 
 async function defaultPrepareDir(path: string): Promise<void> {

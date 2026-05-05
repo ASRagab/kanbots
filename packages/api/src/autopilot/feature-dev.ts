@@ -224,6 +224,7 @@ async function runOneIteration(
   const dispatchArgs: Parameters<typeof dispatchAutopilotChild>[1] = {
     issue,
     threadId: thread.id,
+    personaId: persona.id,
   };
   if (model !== undefined) dispatchArgs.model = model;
   if (provider !== undefined) dispatchArgs.provider = provider;

@@ -702,6 +702,66 @@ export interface BridgeChannels {
     args: { runId: number };
     result: AgentRun;
   };
+  'analytics:rollup': {
+    args: {
+      repoOwner?: string;
+      repoName?: string;
+      sinceTs?: string;
+      cardKind?: string;
+      cardSizeBucket?: string;
+    };
+    result: PersonaModelRollupRow[];
+  };
+  'analytics:time-series': {
+    args: {
+      repoOwner?: string;
+      repoName?: string;
+      sinceTs: string;
+      personaId?: string;
+      model?: string;
+    };
+    result: CostTimeSeriesPoint[];
+  };
+  'analytics:frontier': {
+    args: {
+      repoOwner?: string;
+      repoName?: string;
+      sinceTs?: string;
+      minRuns?: number;
+    };
+    result: FrontierPoint[];
+  };
+}
+
+/** Per-(persona × model × provider) rollup. Excludes runs without a
+ *  persona id (chat runs and non-autopilot dispatches). */
+export interface PersonaModelRollupRow {
+  personaId: string;
+  model: string | null;
+  provider: string | null;
+  runs: number;
+  successes: number;
+  failures: number;
+  totalCostUsd: number;
+  avgCostUsd: number;
+  avgDurationMs: number | null;
+  successRate: number;
+}
+
+export interface CostTimeSeriesPoint {
+  bucketDate: string;
+  runs: number;
+  totalCostUsd: number;
+  successRate: number;
+}
+
+export interface FrontierPoint {
+  personaId: string;
+  model: string | null;
+  provider: string | null;
+  runs: number;
+  avgCostUsd: number;
+  successRate: number;
 }
 
 export interface ChatPayload {

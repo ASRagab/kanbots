@@ -108,7 +108,18 @@ function finishCheck(
   status: 'pass' | 'fail',
   summary: string,
 ): void {
-  store.checks.finish({ id, status, summary });
+  const check = store.checks.finish({ id, status, summary });
+  // A failed check downgrades a clean completion. Monotonic upgrade ordering
+  // means `failed`/`stopped`/`promoted` are unaffected by this — only a run
+  // sitting at `completed_clean` flips to `completed_with_failed_checks`.
+  if (status === 'fail') {
+    const run = store.agentRuns.findById(check.agentRunId);
+    if (run && run.successSignal === 'completed_clean') {
+      store.agentRuns.update(check.agentRunId, {
+        successSignal: 'completed_with_failed_checks',
+      });
+    }
+  }
 }
 
 async function loadCheckOverrides(deps: HandlerDeps): Promise<CheckCommandOverrides | undefined> {

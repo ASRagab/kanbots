@@ -9,6 +9,7 @@ import * as agentChecks from './agent-checks.js';
 import * as agentEvents from './agent-events.js';
 import * as agentPreview from './agent-preview.js';
 import * as agentRuns from './agent-runs.js';
+import * as analytics from './analytics.js';
 import * as attachments from './attachments.js';
 import * as autopilot from './autopilot.js';
 import * as cards from './cards.js';
@@ -132,6 +133,9 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'chat:delete': (args) => chat.deleteConversation(deps, args),
     'chat:post-message': (args) => chat.postMessage(deps, args),
     'chat:stop-run': (args) => chat.stopRun(deps, args),
+    'analytics:rollup': (args) => analytics.rollup(deps, args),
+    'analytics:time-series': (args) => analytics.timeSeries(deps, args),
+    'analytics:frontier': (args) => analytics.frontier(deps, args),
   };
   return map;
 }

@@ -1,5 +1,12 @@
 import type { Db } from '../db.js';
-import type { AgentRun, AgentRunId, AgentRunStatus, PreviewState, ThreadId } from '../types.js';
+import type {
+  AgentRun,
+  AgentRunId,
+  AgentRunStatus,
+  PreviewState,
+  SuccessSignal,
+  ThreadId,
+} from '../types.js';
 
 interface AgentRunRow {
   id: number;
@@ -23,6 +30,11 @@ interface AgentRunRow {
   preview_url: string | null;
   preview_state: string | null;
   preview_pid: number | null;
+  persona_id: string | null;
+  card_kind: string | null;
+  card_size_bucket: string | null;
+  issue_body_chars: number | null;
+  success_signal: string | null;
 }
 
 function rowToAgentRun(row: AgentRunRow): AgentRun {
@@ -48,6 +60,11 @@ function rowToAgentRun(row: AgentRunRow): AgentRun {
     previewUrl: row.preview_url,
     previewState: (row.preview_state as PreviewState | null) ?? null,
     previewPid: row.preview_pid,
+    personaId: row.persona_id,
+    cardKind: row.card_kind,
+    cardSizeBucket: row.card_size_bucket,
+    issueBodyChars: row.issue_body_chars,
+    successSignal: (row.success_signal as SuccessSignal | null) ?? null,
   };
 }
 
@@ -77,6 +94,11 @@ export interface UpdateAgentRunPatch {
   previewUrl?: string | null;
   previewState?: PreviewState | null;
   previewPid?: number | null;
+  personaId?: string | null;
+  cardKind?: string | null;
+  cardSizeBucket?: string | null;
+  issueBodyChars?: number | null;
+  successSignal?: SuccessSignal | null;
 }
 
 const PATCH_COLUMNS: Record<keyof UpdateAgentRunPatch, string> = {
@@ -98,6 +120,11 @@ const PATCH_COLUMNS: Record<keyof UpdateAgentRunPatch, string> = {
   previewUrl: 'preview_url',
   previewState: 'preview_state',
   previewPid: 'preview_pid',
+  personaId: 'persona_id',
+  cardKind: 'card_kind',
+  cardSizeBucket: 'card_size_bucket',
+  issueBodyChars: 'issue_body_chars',
+  successSignal: 'success_signal',
 };
 
 const ACTIVE_STATUSES = "('starting', 'running', 'awaiting_input')";
@@ -113,8 +140,8 @@ export class AgentRunsRepo {
 
     const result = this.db
       .prepare(
-        `INSERT INTO agent_runs (thread_id, status, started_at, worktree_path, branch_name)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_runs (thread_id, status, started_at, worktree_path, branch_name, success_signal)
+         VALUES (?, ?, ?, ?, ?, 'pending')`,
       )
       .run(input.threadId, status, startedAt, worktreePath, branchName);
 
@@ -140,6 +167,11 @@ export class AgentRunsRepo {
       previewUrl: null,
       previewState: null,
       previewPid: null,
+      personaId: null,
+      cardKind: null,
+      cardSizeBucket: null,
+      issueBodyChars: null,
+      successSignal: 'pending',
     };
   }
 
@@ -162,6 +194,35 @@ export class AgentRunsRepo {
     const run = this.findById(id);
     if (!run) throw new Error(`AgentRun ${id} not found`);
     return run;
+  }
+
+  /** Conditional success_signal upgrade. Only writes if `next` is strictly
+   *  higher than the existing rank, matching the monotonic semantics in
+   *  canUpgradeSuccessSignal. Returns the row whether or not it was changed. */
+  upgradeSuccessSignal(id: AgentRunId, next: SuccessSignal): AgentRun {
+    const row = this.db
+      .prepare('SELECT success_signal FROM agent_runs WHERE id = ?')
+      .get(id) as { success_signal: string | null } | undefined;
+    if (!row) throw new Error(`AgentRun ${id} not found`);
+    const RANK: Record<SuccessSignal, number> = {
+      pending: 0,
+      failed: 1,
+      stopped: 1,
+      aborted_budget: 1,
+      completed_with_failed_checks: 2,
+      completed_clean: 3,
+      promoted: 4,
+    };
+    const currentRank = row.success_signal ? RANK[row.success_signal as SuccessSignal] ?? 0 : 0;
+    const nextRank = RANK[next];
+    if (nextRank > currentRank) {
+      this.db
+        .prepare('UPDATE agent_runs SET success_signal = ? WHERE id = ?')
+        .run(next, id);
+    }
+    const updated = this.findById(id);
+    if (!updated) throw new Error(`AgentRun ${id} not found`);
+    return updated;
   }
 
   findById(id: AgentRunId): AgentRun | null {
@@ -297,6 +358,208 @@ export class AgentRunsRepo {
     return rows.map((row) => ({
       ...rowToAgentRun(row),
       issueNumber: row.issue_number_alias,
+    }));
+  }
+
+  /**
+   * Rollup over (persona_id, model, provider) for the analytics dashboard.
+   * Filters out runs without a persona (non-autopilot dispatches and chat runs)
+   * since the comparison only makes sense for autopilot-driven work.
+   */
+  personaModelRollup(opts: {
+    repoOwner?: string;
+    repoName?: string;
+    sinceTs?: string;
+    cardKind?: string;
+    cardSizeBucket?: string;
+  } = {}): Array<{
+    personaId: string;
+    model: string | null;
+    provider: string | null;
+    runs: number;
+    successes: number;
+    failures: number;
+    totalCostUsd: number;
+    avgCostUsd: number;
+    avgDurationMs: number | null;
+    successRate: number;
+  }> {
+    const where: string[] = ['ar.persona_id IS NOT NULL'];
+    const params: unknown[] = [];
+    if (opts.repoOwner && opts.repoName) {
+      where.push('t.repo_owner = ?');
+      where.push('t.repo_name = ?');
+      params.push(opts.repoOwner, opts.repoName);
+    }
+    if (opts.sinceTs) {
+      where.push('ar.started_at >= ?');
+      params.push(opts.sinceTs);
+    }
+    if (opts.cardKind) {
+      where.push('ar.card_kind = ?');
+      params.push(opts.cardKind);
+    }
+    if (opts.cardSizeBucket) {
+      where.push('ar.card_size_bucket = ?');
+      params.push(opts.cardSizeBucket);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT
+          ar.persona_id,
+          ar.model,
+          ar.provider,
+          COUNT(*) AS runs,
+          SUM(CASE WHEN ar.success_signal IN ('promoted','completed_clean') THEN 1 ELSE 0 END) AS successes,
+          SUM(CASE WHEN ar.success_signal IN ('failed','stopped','aborted_budget') THEN 1 ELSE 0 END) AS failures,
+          COALESCE(SUM(ar.total_cost_usd), 0) AS total_cost_usd,
+          COALESCE(AVG(ar.total_cost_usd), 0) AS avg_cost_usd,
+          AVG(ar.duration_ms) AS avg_duration_ms
+         FROM agent_runs ar
+         JOIN threads t ON ar.thread_id = t.id
+         WHERE ${where.join(' AND ')}
+         GROUP BY ar.persona_id, ar.model, ar.provider
+         ORDER BY runs DESC, total_cost_usd DESC`,
+      )
+      .all(...params) as Array<{
+        persona_id: string;
+        model: string | null;
+        provider: string | null;
+        runs: number;
+        successes: number;
+        failures: number;
+        total_cost_usd: number;
+        avg_cost_usd: number;
+        avg_duration_ms: number | null;
+      }>;
+
+    return rows.map((r) => ({
+      personaId: r.persona_id,
+      model: r.model,
+      provider: r.provider,
+      runs: r.runs,
+      successes: r.successes,
+      failures: r.failures,
+      totalCostUsd: r.total_cost_usd,
+      avgCostUsd: r.avg_cost_usd,
+      avgDurationMs: r.avg_duration_ms,
+      successRate: r.runs > 0 ? r.successes / r.runs : 0,
+    }));
+  }
+
+  /**
+   * Daily-bucketed cost / count time series. SQLite's strftime is sufficient
+   * for our scale; if rollup tables become a bottleneck we'll materialise.
+   */
+  costTimeSeries(opts: {
+    repoOwner?: string;
+    repoName?: string;
+    sinceTs: string;
+    personaId?: string;
+    model?: string;
+  }): Array<{ bucketDate: string; runs: number; totalCostUsd: number; successRate: number }> {
+    const where: string[] = ['ar.started_at >= ?'];
+    const params: unknown[] = [opts.sinceTs];
+    if (opts.repoOwner && opts.repoName) {
+      where.push('t.repo_owner = ?');
+      where.push('t.repo_name = ?');
+      params.push(opts.repoOwner, opts.repoName);
+    }
+    if (opts.personaId) {
+      where.push('ar.persona_id = ?');
+      params.push(opts.personaId);
+    }
+    if (opts.model) {
+      where.push('ar.model = ?');
+      params.push(opts.model);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT
+          strftime('%Y-%m-%d', ar.started_at) AS bucket_date,
+          COUNT(*) AS runs,
+          COALESCE(SUM(ar.total_cost_usd), 0) AS total_cost_usd,
+          SUM(CASE WHEN ar.success_signal IN ('promoted','completed_clean') THEN 1 ELSE 0 END) AS successes
+         FROM agent_runs ar
+         JOIN threads t ON ar.thread_id = t.id
+         WHERE ${where.join(' AND ')}
+         GROUP BY bucket_date
+         ORDER BY bucket_date ASC`,
+      )
+      .all(...params) as Array<{
+        bucket_date: string;
+        runs: number;
+        total_cost_usd: number;
+        successes: number;
+      }>;
+    return rows.map((r) => ({
+      bucketDate: r.bucket_date,
+      runs: r.runs,
+      totalCostUsd: r.total_cost_usd,
+      successRate: r.runs > 0 ? r.successes / r.runs : 0,
+    }));
+  }
+
+  /**
+   * Pareto-frontier-ready data for a scatter plot of (avg cost, success rate)
+   * across persona × model. Same scope as personaModelRollup but filters out
+   * combos with too few runs to be meaningful.
+   */
+  frontierData(opts: {
+    repoOwner?: string;
+    repoName?: string;
+    sinceTs?: string;
+    minRuns?: number;
+  } = {}): Array<{
+    personaId: string;
+    model: string | null;
+    provider: string | null;
+    runs: number;
+    avgCostUsd: number;
+    successRate: number;
+  }> {
+    const minRuns = opts.minRuns ?? 5;
+    const rollup = this.personaModelRollup(opts);
+    return rollup
+      .filter((r) => r.runs >= minRuns)
+      .map((r) => ({
+        personaId: r.personaId,
+        model: r.model,
+        provider: r.provider,
+        runs: r.runs,
+        avgCostUsd: r.avgCostUsd,
+        successRate: r.successRate,
+      }));
+  }
+
+  /**
+   * Returns Beta(α, β) priors per (persona × model) for Thompson-sampling
+   * routing. α = successes + 1, β = failures + 1. Filtered by card-kind /
+   * size when specified — that's the primary axis of routing decisions.
+   */
+  routerCandidates(opts: {
+    repoOwner?: string;
+    repoName?: string;
+    cardKind?: string;
+    cardSizeBucket?: string;
+  } = {}): Array<{
+    personaId: string;
+    model: string | null;
+    provider: string | null;
+    alpha: number;
+    beta: number;
+    avgCostUsd: number;
+    runs: number;
+  }> {
+    const rollup = this.personaModelRollup(opts);
+    return rollup.map((r) => ({
+      personaId: r.personaId,
+      model: r.model,
+      provider: r.provider,
+      alpha: r.successes + 1,
+      beta: r.failures + 1,
+      avgCostUsd: r.avgCostUsd,
+      runs: r.runs,
     }));
   }
 }

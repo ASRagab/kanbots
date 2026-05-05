@@ -186,8 +186,11 @@ export type {
   SentrySuggestionConfidence,
   SentrySuggestionVerdict,
   SentryTokenEncryption,
+  SuccessSignal,
   Thread,
   ThreadId,
 } from './types.js';
+
+export { canUpgradeSuccessSignal } from './types.js';
 
 export type { StartCheckInput, FinishCheckInput } from './repos/agent-checks.js';

@@ -39,6 +39,9 @@ describe('migrations', () => {
   it('records applied migrations in _migrations', () => {
     const store = openStoreInMemory();
     const rows = store.db.prepare('SELECT id FROM _migrations').all() as { id: string }[];
+    // 0019_project_scope is intentionally absent — the file exists on disk
+    // but isn't wired into migrations/index.ts yet (cloud-sync columns are
+    // dormant). See migrations/index.ts for the rationale.
     expect(rows.map((r) => r.id)).toEqual([
       '0001_initial',
       '0002_agent_session',
@@ -49,7 +52,16 @@ describe('migrations', () => {
       '0007_agent_checks',
       '0008_agent_preview',
       '0009_autopilot_sessions',
+      '0010_agent_stop_escalation',
       '0010_cost_budget',
+      '0010_sentry',
+      '0013_providers',
+      '0014_agent_run_provider',
+      '0015_thread_last_model',
+      '0016_chat_conversations',
+      '0017_codex_cli_provider',
+      '0018_remove_api_key_providers',
+      '0020_run_analytics',
     ]);
     store.close();
   });

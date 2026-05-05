@@ -16,7 +16,13 @@ import { migration as m0015 } from './0015-thread-last-model.js';
 import { migration as m0016 } from './0016-chat-conversations.js';
 import { migration as m0017 } from './0017-codex-cli-provider.js';
 import { migration as m0018 } from './0018-remove-api-key-providers.js';
+import { migration as m0020 } from './0020-run-analytics.js';
 import type { Migration } from './types.js';
+
+// 0019-project-scope.ts is intentionally not imported here — it scaffolds
+// the cloud-sync columns/tables but no code reads them yet. Wire it in when
+// the cloud edition lands. New migrations bump past 0019 to preserve future
+// numbering.
 
 export const migrations: readonly Migration[] = [
   m0001,
@@ -37,6 +43,7 @@ export const migrations: readonly Migration[] = [
   m0016,
   m0017,
   m0018,
+  m0020,
 ];
 
 export type { Migration };

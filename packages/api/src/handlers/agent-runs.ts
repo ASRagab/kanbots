@@ -222,6 +222,9 @@ export async function promoteCommit(
   }
 
   const cleanup = await cleanupRunArtifacts(deps, run, repoPath);
+  // Mark the run as promoted (monotonic upgrade — won't regress earlier
+  // signals like `failed`/`stopped` if a user force-promotes a partial run).
+  deps.store.agentRuns.upgradeSuccessSignal(run.id, 'promoted');
   return { commitSha, base, cleanup };
 }
 
@@ -470,6 +473,9 @@ export async function promotePr(
     base,
     issueNumber: issue.number,
   });
+  // PR open is a "promoted" signal too — the user has chosen to land this
+  // run via review rather than direct commit. Monotonic upgrade.
+  deps.store.agentRuns.upgradeSuccessSignal(run.id, 'promoted');
   return { pr };
 }
 

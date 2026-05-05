@@ -138,4 +138,64 @@ describe('AgentRunsRepo', () => {
       expect(store.agentRuns.markStartingRunningAsInterrupted('x')).toEqual([]);
     });
   });
+
+  describe('analytics columns', () => {
+    it('initialises success_signal to pending', () => {
+      const r = store.agentRuns.create({ threadId });
+      expect(r.successSignal).toBe('pending');
+    });
+
+    it('round-trips persona/card/size fields via update', () => {
+      const r = store.agentRuns.create({ threadId });
+      const u = store.agentRuns.update(r.id, {
+        personaId: 'builtin:senior-engineer',
+        cardKind: 'feat',
+        cardSizeBucket: 'm',
+        issueBodyChars: 1234,
+      });
+      expect(u.personaId).toBe('builtin:senior-engineer');
+      expect(u.cardKind).toBe('feat');
+      expect(u.cardSizeBucket).toBe('m');
+      expect(u.issueBodyChars).toBe(1234);
+    });
+  });
+
+  describe('upgradeSuccessSignal', () => {
+    it('upgrades pending → completed_clean', () => {
+      const r = store.agentRuns.create({ threadId });
+      const u = store.agentRuns.upgradeSuccessSignal(r.id, 'completed_clean');
+      expect(u.successSignal).toBe('completed_clean');
+    });
+
+    it('upgrades completed_clean → promoted', () => {
+      const r = store.agentRuns.create({ threadId });
+      store.agentRuns.update(r.id, { successSignal: 'completed_clean' });
+      const u = store.agentRuns.upgradeSuccessSignal(r.id, 'promoted');
+      expect(u.successSignal).toBe('promoted');
+    });
+
+    it('refuses to regress promoted → completed_clean', () => {
+      const r = store.agentRuns.create({ threadId });
+      store.agentRuns.update(r.id, { successSignal: 'promoted' });
+      const u = store.agentRuns.upgradeSuccessSignal(r.id, 'completed_clean');
+      expect(u.successSignal).toBe('promoted');
+    });
+
+    it('refuses to regress failed → stopped (same rank)', () => {
+      const r = store.agentRuns.create({ threadId });
+      store.agentRuns.update(r.id, { successSignal: 'failed' });
+      const u = store.agentRuns.upgradeSuccessSignal(r.id, 'stopped');
+      expect(u.successSignal).toBe('failed');
+    });
+
+    it('upgrades failed → promoted (force-promote case)', () => {
+      // User can promote a partial run even if it was marked failed; the
+      // strongest signal wins. This validates the monotonic ordering allows
+      // it.
+      const r = store.agentRuns.create({ threadId });
+      store.agentRuns.update(r.id, { successSignal: 'failed' });
+      const u = store.agentRuns.upgradeSuccessSignal(r.id, 'promoted');
+      expect(u.successSignal).toBe('promoted');
+    });
+  });
 });

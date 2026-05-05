@@ -19,6 +19,50 @@ export type AgentRunStatus =
   | 'failed'
   | 'stopped';
 
+/**
+ * Terminal-quality classification of a run, used by analytics and the
+ * memory-ledger curator. Higher signals overwrite lower ones monotonically
+ * (a `completed_clean` run becomes `promoted` if/when the user lands its
+ * commit; never the reverse).
+ *
+ * - `pending` — run is in flight or initial state (default for new rows)
+ * - `failed` — exit code != 0 or result.isError
+ * - `stopped` — user-initiated stop, no budget exhaustion
+ * - `aborted_budget` — stopped because per-run cost cap hit
+ * - `completed_with_failed_checks` — finished successfully but a check failed
+ * - `completed_clean` — finished successfully, no failed checks
+ * - `promoted` — code from this run was merged via promoteCommit / PR
+ */
+export type SuccessSignal =
+  | 'pending'
+  | 'failed'
+  | 'stopped'
+  | 'aborted_budget'
+  | 'completed_with_failed_checks'
+  | 'completed_clean'
+  | 'promoted';
+
+/** Ordered such that a higher signal cannot regress to a lower one. Used
+ *  by promotion and check-failure paths to know when to upgrade. */
+const SUCCESS_SIGNAL_RANK: Record<SuccessSignal, number> = {
+  pending: 0,
+  failed: 1,
+  stopped: 1,
+  aborted_budget: 1,
+  completed_with_failed_checks: 2,
+  completed_clean: 3,
+  promoted: 4,
+};
+
+/** True if `next` is a valid forward transition from `prev` (monotonic). */
+export function canUpgradeSuccessSignal(
+  prev: SuccessSignal | null,
+  next: SuccessSignal,
+): boolean {
+  if (prev === null) return true;
+  return SUCCESS_SIGNAL_RANK[next] > SUCCESS_SIGNAL_RANK[prev];
+}
+
 export type AgentEventType =
   | 'tool_use'
   | 'tool_result'
@@ -93,6 +137,17 @@ export interface AgentRun {
   previewUrl: string | null;
   previewState: PreviewState | null;
   previewPid: number | null;
+  /** Persona id when dispatched via autopilot; null otherwise. */
+  personaId: string | null;
+  /** Coarse classification derived from issue labels (e.g. `feat`, `bug`). */
+  cardKind: string | null;
+  /** Bucketed body-length proxy used as a card-size feature for analytics. */
+  cardSizeBucket: string | null;
+  /** Raw issue body length captured at dispatch — kept so card_size_bucket
+   *  can be re-computed if thresholds change. */
+  issueBodyChars: number | null;
+  /** Terminal classification of the run, used by analytics and curator. */
+  successSignal: SuccessSignal | null;
 }
 
 export interface AgentCheck {
