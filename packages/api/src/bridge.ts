@@ -21,6 +21,7 @@ import type {
   CardType,
   ChatConversation,
   CheckKind,
+  Learning,
   Message,
   PreviewState,
   Role,
@@ -63,6 +64,7 @@ export type {
   CardType,
   ChatConversation,
   CheckKind,
+  Learning,
   Message,
   PreviewState,
   Role,
@@ -701,6 +703,28 @@ export interface BridgeChannels {
   'chat:stop-run': {
     args: { runId: number };
     result: AgentRun;
+  };
+  'learnings:list': {
+    args: {
+      repoOwner: string;
+      repoName: string;
+      includeDeleted?: boolean;
+      tag?: 'convention' | 'gotcha' | 'fragile' | 'decision-rationale';
+      limit?: number;
+    };
+    result: Learning[];
+  };
+  'learnings:delete': {
+    args: { id: number };
+    result: Learning;
+  };
+  'learnings:update': {
+    args: { id: number; content: string };
+    result: Learning;
+  };
+  'learnings:pin': {
+    args: { id: number; pinned: boolean };
+    result: Learning;
   };
   'analytics:rollup': {
     args: {

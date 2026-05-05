@@ -178,6 +178,44 @@ export interface Promotion {
   createdAt: string;
 }
 
+export type LearningId = number;
+
+/** Tag under which a learning is filed. Curator output is constrained to
+ *  these four buckets to make retrieval tractable. */
+export type LearningTag = 'convention' | 'gotcha' | 'fragile' | 'decision-rationale';
+
+export interface Learning {
+  id: LearningId;
+  repoOwner: string;
+  repoName: string;
+  tag: LearningTag;
+  content: string;
+  /** Deterministic hash used for dedup (sha-256 of normalised content). */
+  contentHash: string;
+  sourceRunId: AgentRunId | null;
+  /** Curator's self-reported confidence in the lesson, 0-1. Used by retrieval
+   *  to weight low-confidence entries lower. */
+  confidence: number;
+  evidenceEventSeqMin: number | null;
+  evidenceEventSeqMax: number | null;
+  /** Reserved for future semantic retrieval (sqlite-vec or similar). */
+  embedding: Buffer | null;
+  pinned: boolean;
+  useCount: number;
+  createdAt: string;
+  lastUsedAt: string | null;
+  supersedesId: LearningId | null;
+  deletedAt: string | null;
+}
+
+export interface CuratorRunState {
+  repoOwner: string;
+  repoName: string;
+  dailyBudgetUsd: number | null;
+  spentTodayUsd: number;
+  spentDate: string | null;
+}
+
 export interface CacheEntry {
   key: string;
   etag: string | null;

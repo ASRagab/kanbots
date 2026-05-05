@@ -9,6 +9,7 @@ import { CardsRepo } from './repos/cards.js';
 import { ChatConversationsRepo } from './repos/chat-conversations.js';
 import { FoldersRepo } from './repos/folders.js';
 import { HttpCacheRepo } from './repos/http-cache.js';
+import { LearningsRepo } from './repos/learnings.js';
 import { LocalIssuesRepo } from './repos/local-issues.js';
 import { MessagesRepo } from './repos/messages.js';
 import { PromotionsRepo } from './repos/promotions.js';
@@ -28,6 +29,7 @@ export interface Store {
   readonly checks: AgentChecksRepo;
   readonly promotions: PromotionsRepo;
   readonly httpCache: HttpCacheRepo;
+  readonly learnings: LearningsRepo;
   readonly localIssues: LocalIssuesRepo;
   readonly workspaces: WorkspacesRepo;
   readonly folders: FoldersRepo;
@@ -65,6 +67,7 @@ function wrap(db: Db): Store {
     checks: new AgentChecksRepo(db),
     promotions: new PromotionsRepo(db),
     httpCache: new HttpCacheRepo(db),
+    learnings: new LearningsRepo(db),
     localIssues: new LocalIssuesRepo(db),
     workspaces: new WorkspacesRepo(db),
     folders: new FoldersRepo(db),
@@ -94,6 +97,16 @@ export {
 } from './repos/chat-conversations.js';
 export type { CreateMessageInput } from './repos/messages.js';
 export type { CreateAgentRunInput, UpdateAgentRunPatch } from './repos/agent-runs.js';
+export type {
+  ListAllLearningsInput,
+  ListForInjectionInput,
+  UpsertLearningInput,
+  UpsertLearningResult,
+} from './repos/learnings.js';
+export {
+  hashLearningContent,
+  normaliseLearningContent,
+} from './repos/learnings.js';
 export type {
   CreateAutopilotSessionInput,
   UpdateAutopilotSessionPatch,
@@ -167,6 +180,10 @@ export type {
   ChatConversationId,
   CheckKind,
   CheckStatus,
+  CuratorRunState,
+  Learning,
+  LearningId,
+  LearningTag,
   Message,
   MessageId,
   PreviewState,

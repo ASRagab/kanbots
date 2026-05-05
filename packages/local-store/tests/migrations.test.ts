@@ -62,6 +62,7 @@ describe('migrations', () => {
       '0017_codex_cli_provider',
       '0018_remove_api_key_providers',
       '0020_run_analytics',
+      '0021_learnings',
     ]);
     store.close();
   });

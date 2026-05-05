@@ -20,6 +20,7 @@ import * as cooldown from './cooldown.js';
 import * as cost from './cost.js';
 import * as decisions from './decisions.js';
 import * as issues from './issues.js';
+import * as learnings from './learnings.js';
 import * as providers from './providers.js';
 import * as sentry from './sentry.js';
 import type {
@@ -133,6 +134,10 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'chat:delete': (args) => chat.deleteConversation(deps, args),
     'chat:post-message': (args) => chat.postMessage(deps, args),
     'chat:stop-run': (args) => chat.stopRun(deps, args),
+    'learnings:list': (args) => learnings.list(deps, args),
+    'learnings:delete': (args) => learnings.deleteLearning(deps, args),
+    'learnings:update': (args) => learnings.update(deps, args),
+    'learnings:pin': (args) => learnings.pin(deps, args),
     'analytics:rollup': (args) => analytics.rollup(deps, args),
     'analytics:time-series': (args) => analytics.timeSeries(deps, args),
     'analytics:frontier': (args) => analytics.frontier(deps, args),

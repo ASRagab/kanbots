@@ -405,14 +405,40 @@ export async function createSupervisor(
   ): { prompt: string; briefing: string | null } {
     const briefing = renderSiblingBriefing(store, currentRunId);
     const houseRules = readHouseRules();
+    const learnings = collectLearningsForRun(currentRunId);
     const parts: string[] = [];
     if (houseRules) {
       parts.push(`WORKSPACE_RULES — apply to every turn:\n${houseRules}`);
     }
     parts.push(decisionInstructions);
+    if (learnings) parts.push(learnings);
     if (briefing) parts.push(briefing);
     if (extra) parts.push(extra);
     return { prompt: parts.join('\n\n'), briefing };
+  }
+
+  /** Pull top-N learnings for the run's repo and format them as a system
+   *  block. Bumps use_count on the injected entries so the recency-decayed
+   *  ranker rotates between them over time. Returns null when the repo has
+   *  no learnings yet. */
+  function collectLearningsForRun(runId: number): string | null {
+    const run = store.agentRuns.findById(runId);
+    if (!run) return null;
+    const thread = store.threads.findById(run.threadId);
+    if (!thread) return null;
+    const entries = store.learnings.listForInjection({
+      repoOwner: thread.repoOwner,
+      repoName: thread.repoName,
+    });
+    if (entries.length === 0) return null;
+    const lines = entries.map(
+      (e) => `[${e.tag}] ${e.content}${e.sourceRunId ? ` (run #${e.sourceRunId})` : ''}`,
+    );
+    store.learnings.bumpUsage(entries.map((e) => e.id));
+    return [
+      'LEARNED_FROM_PRIOR_RUNS — durable lessons distilled from earlier runs in this repo. Treat as hints (not hard rules); apply when relevant:',
+      ...lines,
+    ].join('\n');
   }
 
   function persistBriefing(runId: number, briefing: string | null): void {
