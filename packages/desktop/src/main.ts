@@ -86,7 +86,13 @@ import {
   safeStorageAvailable,
 } from './sentry-token.js';
 import { hasClaudeCodeCredentials } from './providers-key.js';
-import type { ActiveWorkspaceInfo, BootstrapPayload, RecentWorkspace } from './types.js';
+import type {
+  ActiveCloudWorkspaceInfo,
+  ActiveWorkspaceInfo,
+  BootstrapPayload,
+  RecentCloudWorkspace,
+  RecentWorkspace,
+} from './types.js';
 import type { AgentRun, AgentRunStatus } from '@kanbots/local-store';
 
 interface ActiveWorkspace {
@@ -119,6 +125,12 @@ process.on('unhandledRejection', (reason) => {
 });
 
 let activeWorkspace: ActiveWorkspace | null = null;
+/**
+ * Free-floating cloud workspace (no git repo). Mutually exclusive
+ * with `activeWorkspace` — opening one closes the other so the
+ * renderer always sees exactly one active workspace.
+ */
+let activeCloudWorkspace: ActiveCloudWorkspaceInfo | null = null;
 let mainWindow: BrowserWindow | null = null;
 const chatWindows = new Set<BrowserWindow>();
 
@@ -192,6 +204,36 @@ async function pruneMissingRecents(): Promise<RecentWorkspace[]> {
   const present = list.filter((r) => existsSync(r.repoPath));
   if (present.length !== list.length) await writeRecents(present);
   return present;
+}
+
+function cloudRecentsPath(): string {
+  return join(app.getPath('userData'), 'cloud-workspaces.json');
+}
+
+async function readCloudRecents(): Promise<RecentCloudWorkspace[]> {
+  try {
+    const raw = await readFile(cloudRecentsPath(), 'utf-8');
+    const parsed = JSON.parse(raw) as { recents?: RecentCloudWorkspace[] };
+    return Array.isArray(parsed.recents) ? parsed.recents : [];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    return [];
+  }
+}
+
+async function writeCloudRecents(list: RecentCloudWorkspace[]): Promise<void> {
+  const path = cloudRecentsPath();
+  await mkdir(join(path, '..'), { recursive: true });
+  await writeFile(path, JSON.stringify({ recents: list }, null, 2), 'utf-8');
+}
+
+async function recordCloudRecent(entry: Omit<RecentCloudWorkspace, 'lastOpenedAt'>): Promise<void> {
+  const list = await readCloudRecents();
+  const filtered = list.filter(
+    (r) => !(r.orgSlug === entry.orgSlug && r.projectSlug === entry.projectSlug),
+  );
+  filtered.unshift({ ...entry, lastOpenedAt: new Date().toISOString() });
+  await writeCloudRecents(filtered.slice(0, RECENTS_LIMIT));
 }
 
 function stripHouseRules(config: WorkspaceConfig): WorkspaceConfig {
@@ -279,6 +321,10 @@ async function buildSource(config: WorkspaceConfig, store: Store): Promise<Issue
 }
 
 async function closeActiveWorkspace(): Promise<void> {
+  // Free-floating cloud workspace has no local resources, so closing
+  // is just clearing the state. Done first so renderer never sees
+  // both kinds set at once.
+  closeActiveCloudWorkspace();
   // Chat windows are bound to the workspace's SQLite db; close them before
   // ripping the workspace down so the renderer stops sending IPC into
   // handlers that are about to disappear.
@@ -723,10 +769,54 @@ function activeWorkspaceInfo(): ActiveWorkspaceInfo | null {
   return { repoPath: activeWorkspace.repoPath, config: activeWorkspace.config };
 }
 
+/**
+ * Open a free-floating cloud workspace. Closes any active local
+ * workspace first (mutually exclusive). Verifies the project exists
+ * by hitting the cloud API; if not, returns an error so the picker
+ * can re-render.
+ */
+async function openCloudWorkspaceInternal(
+  orgSlug: string,
+  projectSlug: string,
+): Promise<ActiveCloudWorkspaceInfo> {
+  const orgList = await cloudClient.orgs.list({ limit: 100 });
+  const org = orgList.data.find((o) => o.slug === orgSlug);
+  if (org === undefined) throw new Error(`org '${orgSlug}' not found or you no longer have access`);
+
+  const projectList = await cloudClient.projects.list(orgSlug);
+  const project = projectList.data.find((p) => p.slug === projectSlug);
+  if (project === undefined) {
+    throw new Error(`project '${projectSlug}' not found in '${orgSlug}'`);
+  }
+
+  await closeActiveWorkspace();
+
+  const info: ActiveCloudWorkspaceInfo = {
+    orgSlug,
+    orgDisplayName: org.display_name,
+    projectSlug,
+    projectDisplayName: project.display_name,
+    localRepoPath: null,
+  };
+  activeCloudWorkspace = info;
+  await recordCloudRecent({
+    orgSlug,
+    orgDisplayName: org.display_name,
+    projectSlug,
+    projectDisplayName: project.display_name,
+  });
+  return info;
+}
+
+function closeActiveCloudWorkspace(): void {
+  activeCloudWorkspace = null;
+}
+
 function registerIpc(): void {
   ipcMain.handle('kanbots:bootstrap', async (): Promise<BootstrapPayload> => {
-    const [recents, claudeAuthed, cloudStatus] = await Promise.all([
+    const [recents, cloudRecents, claudeAuthed, cloudStatus] = await Promise.all([
       pruneMissingRecents(),
+      readCloudRecents(),
       isClaudeAuthenticated(),
       getCloudStatus(),
     ]);
@@ -737,7 +827,9 @@ function registerIpc(): void {
       existsSync(CODEX_AUTH_PATH) || Boolean(process.env.OPENAI_API_KEY);
     return {
       workspace: activeWorkspaceInfo(),
+      cloudWorkspace: activeCloudWorkspace,
       recents,
+      cloudRecents,
       claudeAuthed,
       codexAuthed,
       cloudAuthed: cloudStatus.authed,
@@ -870,6 +962,34 @@ function registerIpc(): void {
       args: { orgSlug: string; projectSlug: string; body: CreateCardRequest },
     ) => {
       return cloudClient.cards.create(args.orgSlug, args.projectSlug, args.body);
+    },
+  );
+
+  ipcMain.handle(
+    'kanbots:open-cloud-workspace',
+    async (
+      _event,
+      args: { orgSlug: string; projectSlug: string },
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      try {
+        await openCloudWorkspaceInternal(args.orgSlug, args.projectSlug);
+        if (mainWindow) mainWindow.webContents.reloadIgnoringCache();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  );
+
+  ipcMain.handle('kanbots:close-cloud-workspace', async (): Promise<void> => {
+    closeActiveCloudWorkspace();
+    if (mainWindow) mainWindow.webContents.reloadIgnoringCache();
+  });
+
+  ipcMain.handle(
+    'kanbots:recent-cloud-workspaces',
+    async (): Promise<RecentCloudWorkspace[]> => {
+      return readCloudRecents();
     },
   );
 

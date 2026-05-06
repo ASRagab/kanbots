@@ -7,6 +7,7 @@ import { useTweaks } from './hooks/useTweaks.js';
 import { IssuesProvider, useIssues } from './hooks/useIssues.js';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts.js';
 import { Board } from './pages/Board.js';
+import { CloudWorkspacePicker } from './pages/CloudWorkspacePicker.js';
 import { ProvidersOverlay } from './pages/ProvidersOverlay.js';
 import { WorkspacePicker } from './pages/WorkspacePicker.js';
 import { api } from './api.js';
@@ -20,12 +21,19 @@ import { SplitModal } from './components/modals/SplitModal.js';
 import { Tray } from './components/tray/Tray.js';
 import { Palette } from './components/palette/Palette.js';
 import { TweaksPanel } from './components/tweaks/TweaksPanel.js';
-import type { ActiveWorkspaceInfo, RecentWorkspace } from './desktop-bridge.js';
+import type {
+  ActiveCloudWorkspaceInfo,
+  ActiveWorkspaceInfo,
+  RecentCloudWorkspace,
+  RecentWorkspace,
+} from './desktop-bridge.js';
 import type { Config, Issue } from './types.js';
 
 interface AppProps {
   workspace: ActiveWorkspaceInfo | null;
+  cloudWorkspace: ActiveCloudWorkspaceInfo | null;
   initialRecents: RecentWorkspace[];
+  initialCloudRecents: RecentCloudWorkspace[];
   hasBridge: boolean;
   initialClaudeAuthed: boolean;
   initialCodexAuthed: boolean;
@@ -230,7 +238,9 @@ function ShellHost({
 
 export function App({
   workspace,
+  cloudWorkspace,
   initialRecents,
+  initialCloudRecents,
   hasBridge,
   initialClaudeAuthed,
   initialCodexAuthed,
@@ -241,6 +251,8 @@ export function App({
   const [cloudPromptDone, setCloudPromptDone] = useState<boolean>(
     initialCloudAuthed || initialCloudPromptDismissed,
   );
+  const [cloudAuthed, setCloudAuthed] = useState<boolean>(initialCloudAuthed);
+  const [forceLocalPicker, setForceLocalPicker] = useState(false);
   const { data: config } = useFetch(workspace ? 'config' : null, () => api.config());
   const { data: providers } = useFetch(
     workspace ? `providers:${providersTick}` : null,
@@ -255,14 +267,33 @@ export function App({
     return (
       <CloudFirstRunPrompt
         onDismissed={() => setCloudPromptDone(true)}
-        onSignedIn={() => setCloudPromptDone(true)}
+        onSignedIn={() => {
+          setCloudAuthed(true);
+          setCloudPromptDone(true);
+        }}
       />
     );
   }
 
-  // Workspace picker still gates first — without a workspace, there's no
-  // store to read provider config from.
+  // Cloud-mode placeholder while P3 wires the cloud-backed Board.
+  // Shows the active project so the user knows the workspace switched.
+  if (hasBridge && cloudWorkspace !== null) {
+    return <CloudWorkspaceShell info={cloudWorkspace} />;
+  }
+
+  // No workspace selected. If the user is signed in to cloud (and hasn't
+  // explicitly asked for local), show the cloud picker; otherwise the
+  // local one.
   if (hasBridge && !workspace) {
+    if (cloudAuthed && !forceLocalPicker) {
+      return (
+        <CloudWorkspacePicker
+          initialRecents={initialCloudRecents}
+          onPickLocal={() => setForceLocalPicker(true)}
+          onOpened={() => window.location.reload()}
+        />
+      );
+    }
     return (
       <WorkspacePicker initialRecents={initialRecents} onOpened={() => window.location.reload()} />
     );
@@ -293,5 +324,57 @@ export function App({
     <IssuesProvider>
       <ShellHost config={config ?? null} workspace={workspace} />
     </IssuesProvider>
+  );
+}
+
+/**
+ * Placeholder for the cloud-mode shell. P3 replaces this with the
+ * actual cloud-backed Board, comments, and run streaming. For now
+ * it just confirms the workspace switched and offers a way back to
+ * the picker so the user isn't trapped.
+ */
+function CloudWorkspaceShell({ info }: { info: ActiveCloudWorkspaceInfo }) {
+  const [closing, setClosing] = useState(false);
+
+  async function close(): Promise<void> {
+    const bridge = getBridge();
+    if (!bridge) return;
+    setClosing(true);
+    await bridge.closeCloudWorkspace();
+    window.location.reload();
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        padding: 32,
+        gap: 16,
+        textAlign: 'center',
+        color: 'var(--ink)',
+      }}
+    >
+      <h1 style={{ fontSize: 24, margin: 0 }}>{info.projectDisplayName}</h1>
+      <p style={{ color: 'var(--ink-2)', margin: 0 }}>
+        {info.orgDisplayName} · cloud project
+      </p>
+      <p style={{ color: 'var(--ink-3)', maxWidth: 480, fontSize: 13 }}>
+        The cloud-backed board lands in P3. For now, this confirms the workspace is
+        connected to <code>{info.orgSlug}/{info.projectSlug}</code>. Cards, comments, and
+        run streaming will render here.
+      </p>
+      <button
+        type="button"
+        className="kb-btn ghost"
+        onClick={() => void close()}
+        disabled={closing}
+      >
+        {closing ? 'Closing…' : 'Switch workspace'}
+      </button>
+    </div>
   );
 }

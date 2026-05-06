@@ -4,7 +4,12 @@ import { App } from './App.js';
 import { ChatApp } from './pages/ChatApp.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { getBridge } from './desktop-bridge.js';
-import type { ActiveWorkspaceInfo, RecentWorkspace } from './desktop-bridge.js';
+import type {
+  ActiveCloudWorkspaceInfo,
+  ActiveWorkspaceInfo,
+  RecentCloudWorkspace,
+  RecentWorkspace,
+} from './desktop-bridge.js';
 import './styles/tokens.css';
 import './styles/shell.css';
 import './styles/card.css';
@@ -29,7 +34,9 @@ window.addEventListener('error', (event) => {
 
 async function bootstrap(): Promise<{
   workspace: ActiveWorkspaceInfo | null;
+  cloudWorkspace: ActiveCloudWorkspaceInfo | null;
   recents: RecentWorkspace[];
+  cloudRecents: RecentCloudWorkspace[];
   hasBridge: boolean;
   claudeAuthed: boolean;
   codexAuthed: boolean;
@@ -40,7 +47,9 @@ async function bootstrap(): Promise<{
   if (!bridge) {
     return {
       workspace: null,
+      cloudWorkspace: null,
       recents: [],
+      cloudRecents: [],
       hasBridge: false,
       claudeAuthed: true,
       codexAuthed: true,
@@ -51,7 +60,9 @@ async function bootstrap(): Promise<{
   const payload = await bridge.bootstrap();
   return {
     workspace: payload.workspace,
+    cloudWorkspace: payload.cloudWorkspace,
     recents: payload.recents,
+    cloudRecents: payload.cloudRecents,
     hasBridge: true,
     claudeAuthed: payload.claudeAuthed,
     codexAuthed: payload.codexAuthed,
@@ -84,7 +95,9 @@ if (isChatWindow) {
   void bootstrap().then(
     ({
       workspace,
+      cloudWorkspace,
       recents,
+      cloudRecents,
       hasBridge,
       claudeAuthed,
       codexAuthed,
@@ -96,7 +109,9 @@ if (isChatWindow) {
           <ErrorBoundary>
             <App
               workspace={workspace}
+              cloudWorkspace={cloudWorkspace}
               initialRecents={recents}
+              initialCloudRecents={cloudRecents}
               hasBridge={hasBridge}
               initialClaudeAuthed={claudeAuthed}
               initialCodexAuthed={codexAuthed}

@@ -28,11 +28,13 @@ import type {
   UserMe,
 } from '@kanbots/cloud-client';
 import type {
+  ActiveCloudWorkspaceInfo,
   ActiveWorkspaceInfo,
   BootstrapPayload,
   CloudLoginPollResult,
   CloudLoginStartResult,
   CloudStatusPayload,
+  RecentCloudWorkspace,
   RecentWorkspace,
 } from './desktop-bridge.js';
 
@@ -92,6 +94,12 @@ export interface KanbotsBridge {
     body: UpdateCardRequest;
     ifMatch?: string;
   }): Promise<CardSummary>;
+  openCloudWorkspace(args: {
+    orgSlug: string;
+    projectSlug: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }>;
+  closeCloudWorkspace(): Promise<void>;
+  recentCloudWorkspaces(): Promise<RecentCloudWorkspace[]>;
   setNotifyOnRunComplete(
     enabled: boolean,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
@@ -113,10 +121,12 @@ declare global {
 }
 
 export type {
+  ActiveCloudWorkspaceInfo,
   ActiveWorkspaceInfo,
   BootstrapPayload,
   CloudLoginPollResult,
   CloudLoginStartResult,
   CloudStatusPayload,
+  RecentCloudWorkspace,
   RecentWorkspace,
 };

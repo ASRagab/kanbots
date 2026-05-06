@@ -20,6 +20,7 @@ import type {
   CloudLoginStartResult,
   CloudStatusPayload,
   KanbotsBridge,
+  RecentCloudWorkspace,
   RecentWorkspace,
 } from './types.js';
 
@@ -88,6 +89,14 @@ const api: KanbotsBridge = {
     body: UpdateCardRequest;
     ifMatch?: string;
   }) => ipcRenderer.invoke('kanbots:cloud:cards-update', args) as Promise<CardSummary>,
+  openCloudWorkspace: (args: { orgSlug: string; projectSlug: string }) =>
+    ipcRenderer.invoke('kanbots:open-cloud-workspace', args) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  closeCloudWorkspace: () =>
+    ipcRenderer.invoke('kanbots:close-cloud-workspace') as Promise<void>,
+  recentCloudWorkspaces: () =>
+    ipcRenderer.invoke('kanbots:recent-cloud-workspaces') as Promise<RecentCloudWorkspace[]>,
   setNotifyOnRunComplete: (enabled: boolean) =>
     ipcRenderer.invoke('kanbots:set-notify-on-run-complete', enabled) as Promise<
       { ok: true } | { ok: false; error: string }

@@ -21,9 +21,27 @@ export interface RecentWorkspace {
   lastOpenedAt: string;
 }
 
+export interface ActiveCloudWorkspaceInfo {
+  orgSlug: string;
+  orgDisplayName: string;
+  projectSlug: string;
+  projectDisplayName: string;
+  localRepoPath: string | null;
+}
+
+export interface RecentCloudWorkspace {
+  orgSlug: string;
+  orgDisplayName: string;
+  projectSlug: string;
+  projectDisplayName: string;
+  lastOpenedAt: string;
+}
+
 export interface BootstrapPayload {
   workspace: ActiveWorkspaceInfo | null;
+  cloudWorkspace: ActiveCloudWorkspaceInfo | null;
   recents: RecentWorkspace[];
+  cloudRecents: RecentCloudWorkspace[];
   claudeAuthed: boolean;
   codexAuthed: boolean;
   cloudAuthed: boolean;

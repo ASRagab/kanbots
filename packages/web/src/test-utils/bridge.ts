@@ -69,12 +69,17 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
     | 'cloudCardsList'
     | 'cloudCardsCreate'
     | 'cloudCardsUpdate'
+    | 'openCloudWorkspace'
+    | 'closeCloudWorkspace'
+    | 'recentCloudWorkspaces'
     | 'setNotifyOnRunComplete'
   > = {
     bootstrap: () =>
       Promise.resolve({
         workspace: null,
+        cloudWorkspace: null,
         recents: [],
+        cloudRecents: [],
         claudeAuthed: true,
         codexAuthed: true,
         cloudAuthed: false,
@@ -115,6 +120,9 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
     cloudCardsList: () => Promise.resolve({ data: [], next_cursor: null }),
     cloudCardsCreate: () => Promise.reject(new Error('fake bridge: no cloud cards')),
     cloudCardsUpdate: () => Promise.reject(new Error('fake bridge: no cloud cards')),
+    openCloudWorkspace: () => Promise.resolve({ ok: true }),
+    closeCloudWorkspace: () => Promise.resolve(),
+    recentCloudWorkspaces: () => Promise.resolve([]),
     setNotifyOnRunComplete: () => Promise.resolve({ ok: true }),
   };
 

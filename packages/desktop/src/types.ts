@@ -20,15 +20,41 @@ export interface ActiveWorkspaceInfo {
   config: WorkspaceConfig;
 }
 
+/**
+ * Free-floating cloud workspace — no git repo on disk. The desktop
+ * acts as a thick HTTP client over an org+project on Kanbots Cloud.
+ * Agent dispatch in this mode prompts for a local repo at run time
+ * (or uses a pinned `localRepoPath` if the user bound one to the
+ * project; see P4).
+ */
+export interface ActiveCloudWorkspaceInfo {
+  orgSlug: string;
+  orgDisplayName: string;
+  projectSlug: string;
+  projectDisplayName: string;
+  /** Pinned local repo for agent dispatch; null until P4 binds one. */
+  localRepoPath: string | null;
+}
+
 export interface RecentWorkspace {
   repoPath: string;
   displayName: string;
   lastOpenedAt: string;
 }
 
+export interface RecentCloudWorkspace {
+  orgSlug: string;
+  orgDisplayName: string;
+  projectSlug: string;
+  projectDisplayName: string;
+  lastOpenedAt: string;
+}
+
 export interface BootstrapPayload {
   workspace: ActiveWorkspaceInfo | null;
+  cloudWorkspace: ActiveCloudWorkspaceInfo | null;
   recents: RecentWorkspace[];
+  cloudRecents: RecentCloudWorkspace[];
   claudeAuthed: boolean;
   codexAuthed: boolean;
   cloudAuthed: boolean;
@@ -88,6 +114,12 @@ export interface KanbotsBridge {
   cloudOrgsCreate(body: CreateOrgRequest): Promise<CreateOrgResponse>;
   cloudProjectsList(orgSlug: string): Promise<ProjectListResponse>;
   cloudProjectsCreate(args: { orgSlug: string; body: CreateProjectRequest }): Promise<ProjectSummary>;
+  openCloudWorkspace(args: {
+    orgSlug: string;
+    projectSlug: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }>;
+  closeCloudWorkspace(): Promise<void>;
+  recentCloudWorkspaces(): Promise<RecentCloudWorkspace[]>;
   cloudCardsList(args: {
     orgSlug: string;
     projectSlug: string;
