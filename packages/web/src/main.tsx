@@ -20,6 +20,7 @@ import './styles/create-modal.css';
 import './styles/tray.css';
 import './styles/palette.css';
 import './styles/tweaks.css';
+import './styles/cloud-auth.css';
 import './styles.css';
 
 document.documentElement.setAttribute('data-theme', 'dark');
