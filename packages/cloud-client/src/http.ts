@@ -8,8 +8,24 @@ export interface CloudClientOptions {
   getToken: () => Promise<string | null>;
   /** Same: lets the desktop app point at staging or a self-hosted cloud. */
   getBaseUrl: () => Promise<string>;
+  /**
+   * Optional Vercel-style deployment-protection bypass token. When set,
+   * forwarded as `x-vercel-protection-bypass` on every request so the
+   * client can talk to a protected preview/branch deploy. Resolves to
+   * null for prod/self-hosted endpoints that aren't behind protection.
+   */
+  getBypassToken?: () => Promise<string | null>;
   /** Optional fetch override (for tests). Defaults to globalThis.fetch. */
   fetch?: typeof fetch;
+}
+
+/** Resolve the optional deployment-protection bypass header. */
+export async function bypassHeaders(
+  opts: CloudClientOptions,
+): Promise<Record<string, string>> {
+  if (!opts.getBypassToken) return {};
+  const token = await opts.getBypassToken();
+  return token ? { 'x-vercel-protection-bypass': token } : {};
 }
 
 export class CloudClientError extends Error {
@@ -62,6 +78,7 @@ export async function request<T>(
   const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
     accept: 'application/json',
+    ...(await bypassHeaders(opts)),
   };
   if (input.ifMatch !== undefined) headers['if-match'] = input.ifMatch;
 

@@ -166,6 +166,10 @@ const cloudClient = createCloudClient({
     const status = await getCloudStatus();
     return status.baseUrl ?? DEFAULT_CLOUD_BASE_URL;
   },
+  // Forward a Vercel deployment-protection bypass token when one is set in
+  // the environment. Lets developers point at protected preview/branch
+  // deploys (e.g. staging) without disabling protection. Unset by default.
+  getBypassToken: async () => process.env['KANBOTS_CLOUD_BYPASS_TOKEN'] ?? null,
 });
 
 function appIconOption(): { icon: string } | Record<string, never> {

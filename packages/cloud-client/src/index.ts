@@ -5,7 +5,7 @@
  * Clerk session in the browser.
  */
 
-import { CloudClientError, request, type CloudClientOptions } from './http.js';
+import { CloudClientError, bypassHeaders, request, type CloudClientOptions } from './http.js';
 import type {
   AgentRunListResponse,
   AgentRunSummary,
@@ -294,6 +294,7 @@ async function* streamRunEvents(
   const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
     accept: 'text/event-stream',
+    ...(await bypassHeaders(opts)),
   };
   if (streamOpts?.lastEventId !== undefined) {
     headers['last-event-id'] = streamOpts.lastEventId;

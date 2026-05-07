@@ -4,6 +4,16 @@ import { app, safeStorage, shell } from 'electron';
 
 const DEFAULT_BASE_URL = process.env['KANBOTS_CLOUD_BASE_URL'] ?? 'https://app.kanbots.dev';
 
+// Optional Vercel deployment-protection bypass token. When the cloud base URL
+// points at a protected preview/branch deploy, the API rejects unauthenticated
+// requests with 401. Set KANBOTS_CLOUD_BYPASS_TOKEN to the project's "Protection
+// Bypass for Automation" secret and we forward it on every cloud fetch. Unset
+// for normal users — the standard prod URL is unprotected.
+function bypassHeader(): Record<string, string> {
+  const token = process.env['KANBOTS_CLOUD_BYPASS_TOKEN'];
+  return token ? { 'x-vercel-protection-bypass': token } : {};
+}
+
 interface CloudConfigFileV1 {
   v: 1;
   encryption: 'safe' | 'plain';
@@ -186,7 +196,7 @@ export async function startCloudLogin(opts?: {
   try {
     const res = await fetch(`${baseUrl}/api/v1/agent/devices/start`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...bypassHeader() },
       body: JSON.stringify({ scope: 'user' }),
     });
     if (!res.ok) return { ok: false, error: `device flow start failed (HTTP ${res.status})` };
@@ -240,7 +250,7 @@ export async function pollCloudLogin(): Promise<CloudPollResult> {
   try {
     const res = await fetch(`${p.baseUrl}/api/v1/agent/devices/poll`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...bypassHeader() },
       body: JSON.stringify({ device_code: p.deviceCode }),
     });
     if (res.status === 410 || res.status === 404) {
