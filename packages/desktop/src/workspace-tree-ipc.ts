@@ -2,7 +2,8 @@ import { exec } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { isAbsolute, normalize, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { ipcMain, type WebContents } from 'electron';
+import { clipboard, dialog, ipcMain, shell, type WebContents } from 'electron';
+import { removeWorktree as removeGitWorktree } from '@kanbots/dispatcher';
 
 /**
  * Workspace file-tree IPC. Drives the VSCode-style tree in the LeftRail.
@@ -75,25 +76,72 @@ function resolveSafe(root: string, rel: string): string | null {
   return target;
 }
 
-async function listWorktrees(rootPath: string): Promise<string[]> {
+export interface WorktreeRecord {
+  path: string;
+  branch: string | null;
+  /** Short HEAD sha (7 chars) or null when not available. */
+  head: string | null;
+  /** True for the primary worktree (the repo root). */
+  isMain: boolean;
+  /** True if `git worktree list` flagged this entry as locked. */
+  locked: boolean;
+  /** True for detached-HEAD worktrees. */
+  detached: boolean;
+}
+
+async function parseWorktreeList(rootPath: string): Promise<WorktreeRecord[]> {
   try {
     const { stdout } = await execAsync('git worktree list --porcelain', {
       cwd: rootPath,
       timeout: 5_000,
       maxBuffer: 1_048_576,
     });
-    const paths: string[] = [];
-    for (const line of stdout.split('\n')) {
+    const out: WorktreeRecord[] = [];
+    const absRoot = resolve(rootPath);
+    let cur: Partial<WorktreeRecord> | null = null;
+    function flush(): void {
+      if (cur === null || cur.path === undefined) return;
+      out.push({
+        path: cur.path,
+        branch: cur.branch ?? null,
+        head: cur.head ?? null,
+        isMain: resolve(cur.path) === absRoot,
+        locked: cur.locked === true,
+        detached: cur.detached === true,
+      });
+      cur = null;
+    }
+    for (const raw of stdout.split('\n')) {
+      const line = raw.trimEnd();
+      if (line.length === 0) {
+        flush();
+        continue;
+      }
       if (line.startsWith('worktree ')) {
-        paths.push(line.slice('worktree '.length).trim());
+        flush();
+        cur = { path: line.slice('worktree '.length).trim() };
+      } else if (cur !== null) {
+        if (line.startsWith('HEAD ')) {
+          cur.head = line.slice('HEAD '.length, 'HEAD '.length + 7);
+        } else if (line.startsWith('branch ')) {
+          cur.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+        } else if (line === 'detached') {
+          cur.detached = true;
+        } else if (line.startsWith('locked')) {
+          cur.locked = true;
+        }
       }
     }
-    return paths;
+    flush();
+    return out;
   } catch {
-    // Not a git repo or git missing: treat the root itself as the only
-    // "worktree" so file status still flows through `git status` below.
-    return [rootPath];
+    return [{ path: rootPath, branch: null, head: null, isMain: true, locked: false, detached: false }];
   }
+}
+
+async function listWorktrees(rootPath: string): Promise<string[]> {
+  const records = await parseWorktreeList(rootPath);
+  return records.map((r) => r.path);
 }
 
 async function statusForWorktree(
@@ -254,6 +302,108 @@ export function registerWorkspaceTreeIpc(opts: WorkspaceTreeIpcOptions): void {
     senders.add(wc);
     wc.on('destroyed', () => senders.delete(wc));
   });
+
+  /**
+   * Returns every git worktree under the active repo, augmented with a
+   * dirty-file count derived from the same status sweep used by the
+   * tree badges. The renderer drives the Worktrees rail section off
+   * this — branch labels, "3 changes" hints, action buttons.
+   */
+  ipcMain.handle(
+    'kanbots:workspace:list-worktrees',
+    async (_event, args: { rootPath: string }): Promise<
+      Array<WorktreeRecord & { dirtyCount: number }>
+    > => {
+      const root = resolveRoot ? resolveRoot() : null;
+      if (root === null || resolve(args.rootPath) !== resolve(root)) return [];
+      const records = await parseWorktreeList(root);
+      const out: Array<WorktreeRecord & { dirtyCount: number }> = [];
+      for (const rec of records) {
+        const status = await statusForWorktree(rec.path);
+        out.push({ ...rec, dirtyCount: status.length });
+      }
+      return out;
+    },
+  );
+
+  /** Show the worktree directory in the host file manager. */
+  ipcMain.handle(
+    'kanbots:workspace:reveal-path',
+    async (_event, args: { path: string }): Promise<{ ok: boolean; error?: string }> => {
+      // Defence: only reveal a path that lives inside the active repo
+      // root or one of its worktrees. Prevents a compromised renderer
+      // from reading arbitrary directories.
+      const root = resolveRoot ? resolveRoot() : null;
+      if (root === null) return { ok: false, error: 'no active workspace' };
+      const records = await parseWorktreeList(root);
+      const allowed = records.some((r) => resolve(r.path) === resolve(args.path));
+      if (!allowed) return { ok: false, error: 'path is not a worktree of the active repo' };
+      try {
+        const err = await shell.openPath(args.path);
+        if (err) return { ok: false, error: err };
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  );
+
+  /** Copy a worktree path to the system clipboard. */
+  ipcMain.handle(
+    'kanbots:workspace:copy-path',
+    async (_event, args: { path: string }): Promise<{ ok: boolean }> => {
+      const root = resolveRoot ? resolveRoot() : null;
+      if (root === null) return { ok: false };
+      const records = await parseWorktreeList(root);
+      const allowed = records.some((r) => resolve(r.path) === resolve(args.path));
+      if (!allowed) return { ok: false };
+      clipboard.writeText(args.path);
+      return { ok: true };
+    },
+  );
+
+  /**
+   * Remove a worktree via `git worktree remove`. The main worktree is
+   * never removable; agent-created worktrees with dirty/in-flight
+   * state require `force = true` from the caller (the renderer
+   * surfaces a confirm dialog).
+   */
+  ipcMain.handle(
+    'kanbots:workspace:remove-worktree',
+    async (
+      _event,
+      args: { path: string; force?: boolean },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const root = resolveRoot ? resolveRoot() : null;
+      if (root === null) return { ok: false, error: 'no active workspace' };
+      const records = await parseWorktreeList(root);
+      const target = records.find((r) => resolve(r.path) === resolve(args.path));
+      if (target === undefined) return { ok: false, error: 'not a worktree of the active repo' };
+      if (target.isMain) return { ok: false, error: 'cannot remove the main worktree' };
+      const choice = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Remove worktree?',
+        message: `Remove worktree '${target.branch ?? target.path}'?`,
+        detail:
+          'This deletes the worktree directory and disconnects the branch from this repo. '
+          + (args.force ? 'Uncommitted changes will be lost.' : ''),
+        buttons: ['Cancel', 'Remove'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (choice.response !== 1) return { ok: false, error: 'cancelled' };
+      try {
+        await removeGitWorktree({
+          repoPath: root,
+          worktreePath: target.path,
+          ...(args.force === true ? { force: true } : {}),
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  );
 
   broadcaster = (payload) => {
     for (const wc of senders) {

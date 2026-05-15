@@ -196,7 +196,12 @@ function TreeRow({ entry, depth, state, touched, rootPath, dispatch }: RowProps)
         className={
           `kb-tree-row${touchedForThis ? ' is-touched' : ''}` +
           (entry.type === 'dir' ? ' is-dir' : ' is-file') +
-          (touchedForThis?.live ? ' is-live' : '')
+          (touchedForThis?.live ? ' is-live' : '') +
+          (touchedForThis
+            ? ` is-status-${badgeChar(touchedForThis.status).toLowerCase()}`
+            : entry.type === 'dir' && descCount > 0
+              ? ' has-dirty-descendants'
+              : '')
         }
         style={{ paddingLeft: indent }}
         onClick={() => {

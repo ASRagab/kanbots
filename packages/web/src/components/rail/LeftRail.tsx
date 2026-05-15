@@ -7,6 +7,7 @@ import { useWorkspace } from '../../hooks/useWorkspace.js';
 import { ageString, colorForLogin } from '../../labels.js';
 import type { ChatConversation, Issue } from '../../types.js';
 import { WorkspaceTree } from './WorkspaceTree.js';
+import { WorktreesSection } from './WorktreesSection.js';
 
 export interface LeftRailProps {
   selectedNumber: number | null;
@@ -249,6 +250,8 @@ export function LeftRail({
           header={{ name: headerName, ...(headerSubtitle ? { subtitle: headerSubtitle } : {}) }}
         />
       </div>
+
+      <WorktreesSection />
 
       {liveAgents.length > 0 ? (
         <div className="kb-rail-section">

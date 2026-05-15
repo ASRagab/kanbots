@@ -80,6 +80,10 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
     | 'workspaceReadDir'
     | 'workspaceWorktreeStatus'
     | 'workspaceSubscribeTouched'
+    | 'workspaceListWorktrees'
+    | 'workspaceRevealPath'
+    | 'workspaceCopyPath'
+    | 'workspaceRemoveWorktree'
     | 'cloudRunsGet'
     | 'cloudRunsStreamStart'
     | 'cloudRunsStreamStop'
@@ -149,6 +153,10 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
     workspaceReadDir: () => Promise.resolve([]),
     workspaceWorktreeStatus: () => Promise.resolve({ files: {}, worktrees: [] }),
     workspaceSubscribeTouched: () => () => {},
+    workspaceListWorktrees: () => Promise.resolve([]),
+    workspaceRevealPath: () => Promise.resolve({ ok: true }),
+    workspaceCopyPath: () => Promise.resolve({ ok: true }),
+    workspaceRemoveWorktree: () => Promise.resolve({ ok: true }),
     cloudRunsGet: () => Promise.reject(new Error('fake bridge: no cloud runs')),
     cloudRunsStreamStart: () => Promise.resolve({ subscriptionId: 'fake' }),
     cloudRunsStreamStop: () => Promise.resolve(),

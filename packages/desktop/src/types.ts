@@ -214,6 +214,23 @@ export interface KanbotsBridge {
   workspaceSubscribeTouched(
     handler: (payload: { filePath: string; worktreePath: string | null }) => void,
   ): () => void;
+  workspaceListWorktrees(args: { rootPath: string }): Promise<
+    Array<{
+      path: string;
+      branch: string | null;
+      head: string | null;
+      isMain: boolean;
+      locked: boolean;
+      detached: boolean;
+      dirtyCount: number;
+    }>
+  >;
+  workspaceRevealPath(args: { path: string }): Promise<{ ok: boolean; error?: string }>;
+  workspaceCopyPath(args: { path: string }): Promise<{ ok: boolean }>;
+  workspaceRemoveWorktree(args: {
+    path: string;
+    force?: boolean;
+  }): Promise<{ ok: boolean; error?: string }>;
   cloudRunsGet(args: {
     orgSlug: string;
     projectSlug: string;

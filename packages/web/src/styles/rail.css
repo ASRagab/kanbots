@@ -182,8 +182,21 @@
   border-radius: 4px;
 }
 .kb-tree-row:hover { background: var(--hairline-soft); color: var(--ink); }
-.kb-tree-row.is-touched { color: var(--ink); }
-.kb-tree-row.is-touched.is-live { color: var(--running); }
+/* VSCode-style colour-by-status on the file name itself.
+   The badge keeps its own pill colour; here we tint the row text so a
+   glance at the tree tells you which files git status calls out. */
+.kb-tree-row.is-status-m { color: oklch(0.78 0.16 70); }
+.kb-tree-row.is-status-a { color: oklch(0.72 0.16 145); }
+.kb-tree-row.is-status-d { color: oklch(0.7 0.18 25); }
+.kb-tree-row.is-status-r { color: oklch(0.7 0.13 280); }
+.kb-tree-row.is-status-u { color: oklch(0.72 0.16 145); }  /* untracked, VSCode green */
+.kb-tree-row.has-dirty-descendants { color: oklch(0.78 0.13 70 / 0.9); }
+.kb-tree-row.is-touched .kb-tree-icon { opacity: 1; }
+.kb-tree-row.is-touched.is-live {
+  font-weight: 500;
+  /* keep the status colour but add a soft glow so the eye catches it */
+  filter: drop-shadow(0 0 4px currentColor);
+}
 .kb-tree-caret {
   font-size: 10px;
   color: var(--ink-3);
@@ -228,6 +241,143 @@
   color: var(--ink-3);
   padding: 6px 10px;
   font-style: italic;
+}
+
+/* Worktrees section */
+.kb-rail-label-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.kb-rail-worktrees {
+  flex: 0 0 auto;
+}
+.kb-rail-worktree-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kb-rail-worktree-error {
+  color: oklch(0.7 0.18 25);
+  font-size: 11px;
+  padding: 2px 6px 6px;
+}
+.kb-worktree-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--bg-2);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.kb-worktree-row.is-busy { opacity: 0.6; }
+.kb-worktree-row.is-main { background: var(--bg-3, var(--bg-2)); }
+.kb-worktree-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kb-worktree-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.kb-worktree-glyph {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.kb-worktree-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ff-mono);
+}
+.kb-worktree-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: var(--hairline);
+  color: var(--ink-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.kb-worktree-path {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-family: var(--ff-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-worktree-dirty {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.kb-worktree-dirty.is-clean { color: var(--ink-3); }
+.kb-worktree-dirty.is-dirty { color: oklch(0.78 0.16 70); }
+.kb-worktree-menu-btn {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--ink-3);
+  font-size: 14px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  align-self: center;
+}
+.kb-worktree-menu-btn:hover { color: var(--ink); border-color: var(--ink-2); }
+.kb-worktree-menu-btn:disabled { opacity: 0.5; cursor: progress; }
+.kb-worktree-menu {
+  position: absolute;
+  top: 100%;
+  right: 6px;
+  margin-top: 4px;
+  z-index: 10;
+  min-width: 200px;
+  background: var(--bg-2);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px var(--shadow, oklch(0 0 0 / 0.4));
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.kb-worktree-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.kb-worktree-menu-item:hover { background: var(--hairline-soft); }
+.kb-worktree-menu-item.is-destructive { color: oklch(0.7 0.18 25); }
+.kb-worktree-menu-item.is-destructive:hover {
+  background: oklch(0.7 0.18 25 / 0.12);
+}
+.kb-worktree-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--hairline);
 }
 
 /* Folder + view rows */

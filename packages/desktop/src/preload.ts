@@ -160,6 +160,32 @@ const api: KanbotsBridge = {
     ipcRenderer.on('kanbots:workspace:touched', listener);
     return () => ipcRenderer.off('kanbots:workspace:touched', listener);
   },
+  workspaceListWorktrees: (args: { rootPath: string }) =>
+    ipcRenderer.invoke('kanbots:workspace:list-worktrees', args) as Promise<
+      Array<{
+        path: string;
+        branch: string | null;
+        head: string | null;
+        isMain: boolean;
+        locked: boolean;
+        detached: boolean;
+        dirtyCount: number;
+      }>
+    >,
+  workspaceRevealPath: (args: { path: string }) =>
+    ipcRenderer.invoke('kanbots:workspace:reveal-path', args) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>,
+  workspaceCopyPath: (args: { path: string }) =>
+    ipcRenderer.invoke('kanbots:workspace:copy-path', args) as Promise<{
+      ok: boolean;
+    }>,
+  workspaceRemoveWorktree: (args: { path: string; force?: boolean }) =>
+    ipcRenderer.invoke('kanbots:workspace:remove-worktree', args) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>,
   cloudRunsGet: (args: { orgSlug: string; projectSlug: string; runId: string }) =>
     ipcRenderer.invoke('kanbots:cloud:runs-get', args) as Promise<AgentRunSummary>,
   cloudRunsStreamStart: (args: {
