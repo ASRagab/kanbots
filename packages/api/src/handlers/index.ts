@@ -22,6 +22,7 @@ import * as decisions from './decisions.js';
 import * as issues from './issues.js';
 import * as learnings from './learnings.js';
 import * as providers from './providers.js';
+import type { ProvidersHandlerDeps } from './providers.js';
 import * as sentry from './sentry.js';
 import type {
   ChatToolRuntime,
@@ -41,6 +42,7 @@ export type {
   SentryRuntime,
   SubscriptionRegistry,
 };
+export type { ProvidersHandlerDeps };
 export type {
   Config,
   DraftIssueFn,
@@ -144,4 +146,24 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'analytics:frontier': (args) => analytics.frontier(deps, args),
   };
   return map;
+}
+
+export type ProvidersHandlers = Pick<
+  Handlers,
+  'providers:get' | 'providers:save' | 'providers:test-connection' | 'providers:set-defaults'
+>;
+
+/**
+ * Build the four provider IPC handlers against a narrow `ProvidersHandlerDeps`.
+ * Used by the desktop app to register provider channels at app startup against
+ * an app-level (not workspace-level) SQLite store, because provider config is
+ * per-user, not per-project.
+ */
+export function createProvidersHandlers(deps: ProvidersHandlerDeps): ProvidersHandlers {
+  return {
+    'providers:get': () => providers.getConfig(deps),
+    'providers:save': (args) => providers.save(deps, args),
+    'providers:test-connection': (args) => providers.testConnection(deps, args),
+    'providers:set-defaults': (args) => providers.setDefaults(deps, args),
+  };
 }

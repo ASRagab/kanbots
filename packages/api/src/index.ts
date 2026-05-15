@@ -47,10 +47,14 @@ export {
 
 export {
   createHandlers,
+  createProvidersHandlers,
   type ChatToolRuntime,
   type CreateHandlersOptions,
   type HandlerDeps,
   type Handlers,
+  type ProvidersHandlerDeps,
+  type ProvidersHandlers,
+  type ProvidersRuntime,
   type SentryAnalyzerFn,
   type SentryRuntime,
   type SubscriptionRegistry,

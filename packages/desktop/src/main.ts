@@ -92,6 +92,10 @@ import {
   type OwnedSubscriptionRegistry,
 } from './ipc/subscriptions.js';
 import { registerHandlers } from './ipc/register.js';
+import {
+  closeProvidersStoreForShutdown,
+  registerProvidersIpc,
+} from './providers-ipc.js';
 import { SentryPoller } from './sentry-poller.js';
 import {
   decryptToken,
@@ -875,6 +879,11 @@ function registerIpc(): void {
     });
   }) as typeof ipcMain.handle;
 
+  // Provider config (Claude Code / Codex CLI defaults) is per-user, so its
+  // handlers live at app scope, not workspace scope — survives cloud and
+  // local workspace transitions. Wrapped by the cloud-auth gate above.
+  registerProvidersIpc();
+
   ipcMain.handle('kanbots:bootstrap', async (): Promise<BootstrapPayload> => {
     const [recents, cloudRecents, claudeAuthed, cloudStatus] = await Promise.all([
       pruneMissingRecents(),
@@ -1564,4 +1573,5 @@ app.on('window-all-closed', async () => {
 app.on('before-quit', async () => {
   closeAllChatWindows();
   await closeActiveWorkspace();
+  closeProvidersStoreForShutdown();
 });

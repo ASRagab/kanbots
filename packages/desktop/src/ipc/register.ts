@@ -49,6 +49,11 @@ export function registerHandlers(
       // window-scoped cleanup, which the generic Handlers map can't carry.
       continue;
     }
+    if (channel.startsWith('providers:')) {
+      // Provider config is per-user; registered once at app startup against
+      // the app-level store. See providers-ipc.ts.
+      continue;
+    }
     const handler = handlers[channel] as (args: unknown) => Promise<unknown>;
     ipcMain.handle(
       `${CHANNEL_PREFIX}${channel}`,

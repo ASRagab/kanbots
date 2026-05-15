@@ -513,20 +513,7 @@ export const api = {
     invoke('sentry:analyze', { issueNumber }),
   applySentrySuggestion: (issueNumber: number): Promise<Issue> =>
     invoke('sentry:apply-suggestion', { issueNumber }),
-  getProviders: async (): Promise<ProvidersPayload> => {
-    if (cloudCtx !== null) {
-      // In cloud mode the renderer doesn't manage Claude/Codex providers
-      // locally — agents run cloud-side via the v1 API. anyConfigured=true
-      // keeps the ProvidersOverlay from gating the workspace.
-      return {
-        providers: [],
-        settings: { defaultProvider: null, defaultModel: null },
-        safeStorageAvailable: false,
-        anyConfigured: true,
-      };
-    }
-    return invoke('providers:get', undefined);
-  },
+  getProviders: (): Promise<ProvidersPayload> => invoke('providers:get', undefined),
   saveProvider: (input: ProviderSaveInput): Promise<ProvidersPayload> =>
     invoke('providers:save', input),
   testProviderConnection: (

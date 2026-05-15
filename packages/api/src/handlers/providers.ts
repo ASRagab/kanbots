@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { validateProvider, type ProviderCredentials } from '@kanbots/llm';
-import type { ProviderId } from '@kanbots/local-store';
+import type { ProviderId, Store } from '@kanbots/local-store';
 import { z } from 'zod';
 import type {
   ProviderSaveInput,
@@ -9,7 +9,19 @@ import type {
   ProvidersPayload,
 } from '../bridge.js';
 import { badRequest, parseArgs } from './errors.js';
-import type { HandlerDeps } from './types.js';
+import type { ProvidersRuntime } from './types.js';
+
+/**
+ * Narrow deps for provider handlers. Provider config is user-level (one
+ * Claude Code OAuth, one codex CLI auth per machine), so the handlers don't
+ * need a full workspace `HandlerDeps`. The wider `HandlerDeps` shape is
+ * assignable to this because of structural typing — existing call sites
+ * still compile unchanged.
+ */
+export interface ProvidersHandlerDeps {
+  store: Pick<Store, 'providers' | 'providerSettings'>;
+  providers: ProvidersRuntime;
+}
 
 const PROVIDER_ID_SCHEMA = z.enum(['claude-code', 'codex-cli']);
 
@@ -36,12 +48,12 @@ const setDefaultsSchema = z
   })
   .strict();
 
-export async function getConfig(deps: HandlerDeps): Promise<ProvidersPayload> {
+export async function getConfig(deps: ProvidersHandlerDeps): Promise<ProvidersPayload> {
   return readPayload(deps);
 }
 
 export async function save(
-  deps: HandlerDeps,
+  deps: ProvidersHandlerDeps,
   args: ProviderSaveInput,
 ): Promise<ProvidersPayload> {
   const parsed = parseArgs(saveSchema, args);
@@ -68,7 +80,7 @@ export async function save(
 }
 
 export async function testConnection(
-  deps: HandlerDeps,
+  deps: ProvidersHandlerDeps,
   args: { id: ProviderId; apiKey?: string },
 ): Promise<ProviderTestConnectionResult> {
   const parsed = parseArgs(testSchema, args);
@@ -98,7 +110,7 @@ export async function testConnection(
 }
 
 export async function setDefaults(
-  deps: HandlerDeps,
+  deps: ProvidersHandlerDeps,
   args: ProviderSettingsInput,
 ): Promise<ProvidersPayload> {
   const parsed = parseArgs(setDefaultsSchema, args);
@@ -111,7 +123,7 @@ export async function setDefaults(
   return readPayload(deps);
 }
 
-function readPayload(deps: HandlerDeps): ProvidersPayload {
+function readPayload(deps: ProvidersHandlerDeps): ProvidersPayload {
   const rows = deps.store.providers.list();
   const settings = deps.store.providerSettings.get();
 
