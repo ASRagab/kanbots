@@ -96,6 +96,7 @@ import {
   closeProvidersStoreForShutdown,
   registerProvidersIpc,
 } from './providers-ipc.js';
+import { registerCloudComposerHandlers } from './cloud-composer.js';
 import { SentryPoller } from './sentry-poller.js';
 import {
   decryptToken,
@@ -149,6 +150,7 @@ let activeWorkspace: ActiveWorkspace | null = null;
  * renderer always sees exactly one active workspace.
  */
 let activeCloudWorkspace: ActiveCloudWorkspaceInfo | null = null;
+let cloudComposerUnregister: (() => void) | null = null;
 /**
  * In-flight cloud run-event SSE streams keyed by subscription id.
  * Renderer holds the matching ids; calling -stream-stop aborts.
@@ -833,11 +835,34 @@ async function openCloudWorkspaceInternal(
     projectSlug,
     projectDisplayName: project.display_name,
   });
+
+  // Composer (suggest-a-feature) runs the local Claude/Codex CLI but needs
+  // the cloud backlog as context. Register while the cloud workspace is
+  // open; tear down on close so a future cloud or local workspace can
+  // re-register the same channel without conflict.
+  cloudComposerUnregister = registerCloudComposerHandlers({
+    cloudClient,
+    getActiveCloudWorkspace: () => activeCloudWorkspace,
+    onSuggestEvent: (event) => {
+      const sender = mainWindow?.webContents;
+      if (!sender || sender.isDestroyed()) return;
+      sender.send('composer:suggest:event', event);
+    },
+  });
+
   return info;
 }
 
 function closeActiveCloudWorkspace(): void {
   activeCloudWorkspace = null;
+  if (cloudComposerUnregister !== null) {
+    try {
+      cloudComposerUnregister();
+    } catch {
+      // best-effort
+    }
+    cloudComposerUnregister = null;
+  }
 }
 
 // Cloud-only launch: channels callable without a valid cloud session.

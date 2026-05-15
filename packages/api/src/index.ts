@@ -118,6 +118,7 @@ export type {
   IssueDetail,
   Message,
   PendingDecisionPayload,
+  PlannerEvent,
   PostMessageResult,
   PreviewState,
   PreviewStatePayload,
