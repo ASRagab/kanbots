@@ -8,9 +8,9 @@
 ## Summary
 
 KanBots is two products on purpose. The **OSS desktop** (this repo) is
-free and MIT-licensed; it runs entirely on your machine and is sustained
-by pay-what-you-can [donations](./monetization.md). The **KanBots Cloud**
-web app at [kanbots.dev](https://kanbots.dev) is paid and per-seat; it
+free and MIT-licensed; it runs entirely on your machine. The
+**KanBots Cloud** web app at [kanbots.dev](https://kanbots.dev) is
+paid and per-seat; it
 adds the multi-user features a team needs (real-time presence,
 assignment, audit log, cross-device sync, SSO). Neither product is a
 "lite version" of the other — they are sized for different audiences.
@@ -40,20 +40,13 @@ converts to paid or goes read-only.
 
 **OSS desktop has no backend.** It's an Electron app with a SQLite
 database and your local git worktrees. There are no servers to fund.
-Distribution is GitHub releases. Hosting cost per user is roughly zero.
-Sustainability comes from pay-what-you-can donations — not because
-donations are reliable revenue, but because the marginal cost of an OSS
-user is small enough that gift-economy support is enough.
+Distribution is GitHub releases. Hosting cost per user is roughly zero,
+so the OSS desktop can stay free indefinitely.
 
 Together, the two products cover the full market without either side
 subsidizing the other. Cloud users pay for the multi-user
 infrastructure they actually use; OSS users pay nothing because they
-consume nothing of ours beyond a GitHub release download. Donations are
-a separate, optional gift relationship that funds OSS-specific overhead
-(signing certs, packaging, CI for the OSS repo).
-
-For the long-form donations philosophy, see
-[docs/monetization.md](./monetization.md).
+consume nothing of ours beyond a GitHub release download.
 
 ---
 
@@ -178,7 +171,7 @@ on one machine.
 | Org cost rollup | — | Yes |
 | REST API + PATs | — | Business+ |
 | Outbound webhooks | — | Business+ |
-| Price | Free + donations | Per-seat subscription |
+| Price | Free | Per-seat subscription |
 | Storage | Local SQLite | Postgres (Neon) |
 | Backend | None | Vercel + Neon + Upstash + Clerk + Stripe |
 
@@ -268,17 +261,10 @@ is not a stale fork.
 
 ## See also
 
-- [docs/monetization.md](./monetization.md) — Donations philosophy in
-  full: channels, framing, sustainability targets.
 - [docs/getting-started.md](./getting-started.md) — Install OSS, first
   run, picking a workspace.
 - [docs/architecture.md](./architecture.md) — Packages, IPC bridge,
   database, dependency graph.
-- [`brain/00-product/oss-relationship.md`](../../brain/00-product/oss-relationship.md)
-  — The canonical, maintainer-perspective version of this story
-  (funnel mechanics, donation channel rationale, backport heuristic,
-  marketing IA). This OSS-facing doc is the user-perspective summary;
-  the brain doc is the source of truth for product framing.
 - [kanbots.dev/oss](https://kanbots.dev/oss) — The cloud-side marketing
   page, written for visitors who arrived via the cloud funnel and need
   to learn that OSS is a real, supported alternative.

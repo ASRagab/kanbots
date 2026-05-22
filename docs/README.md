@@ -20,8 +20,6 @@ deeper.
   overrides.
 - **[Architecture](architecture.md)** — package layout, IPC bridge,
   database schema, dependency graph.
-- **[Contributing](contributing.md)** — dev scripts, packaging, where
-  to add things in the monorepo.
 - **[Providers](providers.md)** — picking the agent CLI (Claude Code
   vs. Codex), API key storage, and the chat panel's HTTP backends.
 
