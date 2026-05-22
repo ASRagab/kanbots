@@ -135,13 +135,10 @@ jobs:
         run: ls -la artifacts/
 
       - name: Create or update draft release
-        # Publishes to the public leodavinci1/kanbots-releases repo (this
-        # source repo is private). Requires a PAT/fine-grained token with
-        # `contents: write` on kanbots-releases, stored as RELEASES_REPO_TOKEN.
+        # Publishes to this (public) source repo using the built-in
+        # GITHUB_TOKEN. `permissions: contents: write` is set at the top.
         uses: softprops/action-gh-release@v2
         with:
-          repository: leodavinci1/kanbots-releases
-          token: ${{ secrets.RELEASES_REPO_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.version }}
           draft: true
