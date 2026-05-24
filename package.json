@@ -4,7 +4,7 @@
   "private": true,
   "description": "Local collaboration interface for working on GitHub Issues with Claude Code agents",
   "license": "MIT",
-  "author": "leo_cunha87@hotmail.com",
+  "author": "hello@kanbots.dev",
   "type": "module",
   "engines": {
     "node": ">=20"
