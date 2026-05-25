@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Logo } from '../Logo.js';
 import { getBridge } from '../../desktop-bridge.js';
-import type { CloudStatusPayload } from '../../desktop-bridge.js';
+import type {
+  ActiveCloudWorkspaceInfo,
+  CloudStatusPayload,
+} from '../../desktop-bridge.js';
 
 export interface CloudSettingsModalProps {
   onClose: () => void;
   onChanged?: (status: CloudStatusPayload) => void;
+}
+
+interface CloudBinding {
+  localRepoPath: string;
+  updatedAt: string;
 }
 
 type LoginState =
@@ -56,6 +64,12 @@ export function CloudSettingsModal({ onClose, onChanged }: CloudSettingsModalPro
   const [loadError, setLoadError] = useState<string | null>(null);
   const [login, setLogin] = useState<LoginState>({ kind: 'idle' });
   const [signingOut, setSigningOut] = useState(false);
+  const [activeCloudWorkspace, setActiveCloudWorkspace] = useState<
+    ActiveCloudWorkspaceInfo | null
+  >(null);
+  const [binding, setBinding] = useState<CloudBinding | null>(null);
+  const [bindingBusy, setBindingBusy] = useState(false);
+  const [bindingError, setBindingError] = useState<string | null>(null);
   const pollHandle = useRef<number | null>(null);
 
   function clearPoll(): void {
@@ -77,6 +91,25 @@ export function CloudSettingsModal({ onClose, onChanged }: CloudSettingsModalPro
       setStatus(next);
       setLoadError(null);
       onChanged?.(next);
+      // While we're here, learn whether a cloud workspace is active
+      // and surface its current binding so the user has a real
+      // "Bind local repo" UI inside this modal.
+      try {
+        const boot = await bridge.bootstrap();
+        const ws = boot.cloudWorkspace ?? null;
+        setActiveCloudWorkspace(ws);
+        if (ws) {
+          const current = await bridge.cloudProjectBindingGet({
+            orgSlug: ws.orgSlug,
+            projectSlug: ws.projectSlug,
+          });
+          setBinding(current);
+        } else {
+          setBinding(null);
+        }
+      } catch (err) {
+        setBindingError(err instanceof Error ? err.message : String(err));
+      }
       return next;
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
@@ -85,6 +118,49 @@ export function CloudSettingsModal({ onClose, onChanged }: CloudSettingsModalPro
       setLoading(false);
     }
   }, [onChanged]);
+
+  async function handleBindRepo(): Promise<void> {
+    setBindingError(null);
+    const bridge = getBridge();
+    if (!bridge || !activeCloudWorkspace) return;
+    setBindingBusy(true);
+    try {
+      const picked = await bridge.pickFolder();
+      if (!picked) {
+        setBindingBusy(false);
+        return;
+      }
+      const updated = await bridge.cloudProjectBindingSet({
+        orgSlug: activeCloudWorkspace.orgSlug,
+        projectSlug: activeCloudWorkspace.projectSlug,
+        localRepoPath: picked,
+      });
+      setBinding(updated);
+    } catch (err) {
+      setBindingError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBindingBusy(false);
+    }
+  }
+
+  async function handleClearBinding(): Promise<void> {
+    setBindingError(null);
+    const bridge = getBridge();
+    if (!bridge || !activeCloudWorkspace) return;
+    if (!window.confirm('Unlink this cloud project from its local repo?')) return;
+    setBindingBusy(true);
+    try {
+      await bridge.cloudProjectBindingClear({
+        orgSlug: activeCloudWorkspace.orgSlug,
+        projectSlug: activeCloudWorkspace.projectSlug,
+      });
+      setBinding(null);
+    } catch (err) {
+      setBindingError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBindingBusy(false);
+    }
+  }
 
   useEffect(() => {
     void refresh();
@@ -251,6 +327,12 @@ export function CloudSettingsModal({ onClose, onChanged }: CloudSettingsModalPro
                 status={status}
                 signingOut={signingOut}
                 onSignOut={() => void handleSignOut()}
+                activeCloudWorkspace={activeCloudWorkspace}
+                binding={binding}
+                bindingBusy={bindingBusy}
+                bindingError={bindingError}
+                onBindRepo={() => void handleBindRepo()}
+                onClearBinding={() => void handleClearBinding()}
               />
             ) : (
               <SignedOutView
@@ -285,10 +367,22 @@ export function CloudSettingsModal({ onClose, onChanged }: CloudSettingsModalPro
     status,
     signingOut,
     onSignOut,
+    activeCloudWorkspace,
+    binding,
+    bindingBusy,
+    bindingError,
+    onBindRepo,
+    onClearBinding,
   }: {
     status: CloudStatusPayload;
     signingOut: boolean;
     onSignOut: () => void;
+    activeCloudWorkspace: ActiveCloudWorkspaceInfo | null;
+    binding: CloudBinding | null;
+    bindingBusy: boolean;
+    bindingError: string | null;
+    onBindRepo: () => void;
+    onClearBinding: () => void;
   }) {
     return (
       <div className="kb-cloud-signedin">
@@ -322,7 +416,97 @@ export function CloudSettingsModal({ onClose, onChanged }: CloudSettingsModalPro
           ) : null}
         </dl>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        {activeCloudWorkspace ? (
+          <section
+            style={{
+              marginTop: 16,
+              padding: '12px 14px',
+              borderRadius: 8,
+              border: '1px solid var(--hairline)',
+              background: 'var(--bg-1)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                marginBottom: 6,
+              }}
+            >
+              <strong style={{ fontSize: 13 }}>Local repo binding</strong>
+              <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                {activeCloudWorkspace.orgSlug}/{activeCloudWorkspace.projectSlug}
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--ink-2)', margin: '0 0 10px' }}>
+              Pick the local clone of this project&rsquo;s git repo. Agent runs
+              dispatched from cards will use this path as their worktree root,
+              and the file tree on the left rail will read from here.
+            </p>
+            {binding ? (
+              <>
+                <dl className="kb-cloud-meta" style={{ marginBottom: 10 }}>
+                  <dt className="kb-cloud-meta-key">Path</dt>
+                  <dd className="kb-cloud-meta-val" style={{ margin: 0, wordBreak: 'break-all' }}>
+                    {binding.localRepoPath}
+                  </dd>
+                </dl>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="kb-cloud-secondary"
+                    onClick={onClearBinding}
+                    disabled={bindingBusy}
+                  >
+                    Unlink
+                  </button>
+                  <button
+                    type="button"
+                    className="kb-cloud-cta"
+                    onClick={onBindRepo}
+                    disabled={bindingBusy}
+                  >
+                    {bindingBusy ? 'Working…' : 'Change folder'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="kb-cloud-cta"
+                  onClick={onBindRepo}
+                  disabled={bindingBusy}
+                >
+                  {bindingBusy ? 'Working…' : 'Bind local repo'}
+                </button>
+              </div>
+            )}
+            {bindingError ? (
+              <div className="kb-cloud-error" role="alert" style={{ marginTop: 10 }}>
+                <span className="kb-cloud-error-icon">{ErrIcon}</span>
+                <span>{bindingError}</span>
+              </div>
+            ) : null}
+          </section>
+        ) : (
+          <p
+            style={{
+              marginTop: 14,
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: '1px dashed var(--hairline)',
+              fontSize: 12,
+              color: 'var(--ink-3)',
+            }}
+          >
+            Open a cloud workspace from the picker first, then come back here
+            to point it at your local git clone.
+          </p>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
           <button
             type="button"
             className="kb-cloud-secondary"
