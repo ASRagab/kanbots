@@ -206,18 +206,51 @@ export interface CloudLoginStartedErr {
   error: string;
 }
 
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  // Node's undici fetch always throws TypeError("fetch failed") and
+  // hides the real reason on `.cause`. Surface it so a misconfigured
+  // base URL, expired DNS, TLS issue, or wrong bypass token is
+  // diagnosable from the UI instead of just "fetch failed".
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = (cause as { code?: string }).code;
+    return code ? `${err.message}: ${code} ${cause.message}` : `${err.message}: ${cause.message}`;
+  }
+  return err.message;
+}
+
 export async function startCloudLogin(opts?: {
   baseUrl?: string;
 }): Promise<CloudLoginStartedOk | CloudLoginStartedErr> {
   const baseUrl = (opts?.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
   pendingLogin = null;
+  const headers = { 'content-type': 'application/json', ...bypassHeader() };
+  const haveBypass = 'x-vercel-protection-bypass' in headers;
+  console.log('[cloud-auth] startCloudLogin', {
+    baseUrl,
+    haveBypass,
+    bypassEnvLen: (process.env['KANBOTS_CLOUD_BYPASS_TOKEN'] ?? '').length,
+  });
   try {
     const res = await fetch(`${baseUrl}/api/v1/agent/devices/start`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...bypassHeader() },
+      headers,
       body: JSON.stringify({ scope: 'user' }),
     });
-    if (!res.ok) return { ok: false, error: `device flow start failed (HTTP ${res.status})` };
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      const snippet = bodyText.slice(0, 200).replace(/\s+/g, ' ');
+      console.warn('[cloud-auth] device start failed', {
+        baseUrl,
+        status: res.status,
+        snippet,
+      });
+      return {
+        ok: false,
+        error: `device flow start failed (HTTP ${res.status}${snippet ? `: ${snippet}` : ''})`,
+      };
+    }
     const start = (await res.json()) as DeviceStartResponse;
     pendingLogin = {
       baseUrl,
@@ -239,7 +272,9 @@ export async function startCloudLogin(opts?: {
       intervalMs: pendingLogin.intervalMs,
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const detail = describeFetchError(err);
+    console.error('[cloud-auth] device start threw', { baseUrl, detail });
+    return { ok: false, error: detail };
   }
 }
 
@@ -275,7 +310,14 @@ export async function pollCloudLogin(): Promise<CloudPollResult> {
       pendingLogin = null;
       return { status: 'expired' };
     }
-    if (!res.ok) return { status: 'error', error: `poll failed (HTTP ${res.status})` };
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      const snippet = bodyText.slice(0, 200).replace(/\s+/g, ' ');
+      return {
+        status: 'error',
+        error: `poll failed (HTTP ${res.status}${snippet ? `: ${snippet}` : ''})`,
+      };
+    }
     const body = (await res.json()) as DevicePollResponse;
     if (body.status === 'pending') return { status: 'pending' };
     if (body.status !== 'approved') {
@@ -299,7 +341,7 @@ export async function pollCloudLogin(): Promise<CloudPollResult> {
     await writeConfig(cfg);
     return { status: 'approved', tokenPrefix, orgId: body.org_id };
   } catch (err) {
-    return { status: 'error', error: err instanceof Error ? err.message : String(err) };
+    return { status: 'error', error: describeFetchError(err) };
   }
 }
 

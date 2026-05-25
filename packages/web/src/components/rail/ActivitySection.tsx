@@ -67,7 +67,9 @@ export function ActivitySection({ onSelectIssue }: ActivitySectionProps) {
   useEffect(() => {
     if (!bridge) return;
     let cancelled = false;
+    let skipUnregistered = false;
     async function tick(): Promise<void> {
+      if (skipUnregistered) return;
       try {
         const list = await api.listRecentActivity({ limit: DEFAULT_LIMIT });
         if (cancelled) return;
@@ -75,7 +77,21 @@ export function ActivitySection({ onSelectIssue }: ActivitySectionProps) {
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        // Cloud-only launch: no local workspace is open, so the
+        // workspace-scoped analytics handler isn't registered. Treat
+        // this exactly like a cloud bridge: hide the section instead
+        // of polling forever and spamming the console.
+        const msg = err instanceof Error ? err.message : String(err);
+        // Match Electron's exact "No handler registered for 'channel'"
+        // shape so a future channel rename doesn't silently start
+        // showing the noise again.
+        if (/No handler registered for '/.test(msg)) {
+          skipUnregistered = true;
+          setError(null);
+          setItems(null);
+          return;
+        }
+        setError(msg);
       }
     }
     void tick();

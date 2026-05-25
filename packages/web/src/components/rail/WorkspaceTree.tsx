@@ -608,9 +608,20 @@ export interface WorkspaceTreeProps {
    * created task when the user starts a new agent run on a file.
    */
   onSelectIssue?: (issueNumber: number) => void;
+  /**
+   * Called when the user clicks the "Bind local repo" CTA from the
+   * empty state. The host opens Cloud Settings → Bind tab. Without
+   * this prop the CTA falls back to inert text so older callers
+   * don't break.
+   */
+  onOpenCloudSettings?: () => void;
 }
 
-export function WorkspaceTree({ header, onSelectIssue }: WorkspaceTreeProps) {
+export function WorkspaceTree({
+  header,
+  onSelectIssue,
+  onOpenCloudSettings,
+}: WorkspaceTreeProps) {
   const { repos, focused, setFocusedRepoId } = useFocusedRepo();
   const focusedRepoPath = focused?.repoPath ?? null;
   const [rootPath, setRootPath] = useState<string | null>(null);
@@ -774,8 +785,23 @@ export function WorkspaceTree({ header, onSelectIssue }: WorkspaceTreeProps) {
   if (rootPath === null) {
     return (
       <div className="kb-tree-empty" role="status">
-        No local repo bound. Open Cloud Settings → Bind local repo to see the file
-        tree here.
+        <p style={{ margin: 0 }}>
+          No local repo bound to this cloud project.
+        </p>
+        {onOpenCloudSettings ? (
+          <button
+            type="button"
+            className="kb-btn primary sm"
+            style={{ marginTop: 8 }}
+            onClick={onOpenCloudSettings}
+          >
+            Bind local repo
+          </button>
+        ) : (
+          <p style={{ margin: '4px 0 0', fontSize: 12 }}>
+            Open Cloud Settings → Bind local repo to see the file tree here.
+          </p>
+        )}
       </div>
     );
   }
