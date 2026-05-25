@@ -7,8 +7,17 @@ export {
   recommendedModel,
 } from './catalogue.js';
 
+export { acpAdapter } from './adapters/acp.js';
+export { ampCliAdapter } from './adapters/amp-cli.js';
+export { ccrCliAdapter } from './adapters/ccr-cli.js';
 export { claudeCodeAdapter } from './adapters/claude-code.js';
 export { codexCliAdapter } from './adapters/codex-cli.js';
+export { copilotCliAdapter } from './adapters/copilot-cli.js';
+export { cursorCliAdapter } from './adapters/cursor-cli.js';
+export { droidCliAdapter } from './adapters/droid-cli.js';
+export { geminiCliAdapter } from './adapters/gemini-cli.js';
+export { opencodeCliAdapter } from './adapters/opencode-cli.js';
+export { qwenCliAdapter } from './adapters/qwen-cli.js';
 
 export { chat, getAdapter, listAdapters, validateProvider } from './manager.js';
 

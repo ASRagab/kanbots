@@ -22,9 +22,30 @@ export interface PersonaPickerModalProps {
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   'claude-code': 'Claude',
   'codex-cli': 'Codex',
+  'gemini-cli': 'Gemini',
+  'amp-cli': 'Amp',
+  'cursor-cli': 'Cursor',
+  'copilot-cli': 'Copilot',
+  'opencode-cli': 'OpenCode',
+  'droid-cli': 'Droid',
+  'ccr-cli': 'CCR',
+  'qwen-cli': 'Qwen',
+  acp: 'ACP',
 };
 
-const ALL_PROVIDERS: readonly ProviderId[] = ['claude-code', 'codex-cli'];
+const ALL_PROVIDERS: readonly ProviderId[] = [
+  'claude-code',
+  'codex-cli',
+  'gemini-cli',
+  'amp-cli',
+  'cursor-cli',
+  'copilot-cli',
+  'opencode-cli',
+  'droid-cli',
+  'ccr-cli',
+  'qwen-cli',
+  'acp',
+];
 
 export function PersonaPickerModal({
   onClose,

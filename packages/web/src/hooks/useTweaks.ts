@@ -1,41 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import {
+  TWEAK_DEFAULTS as STORE_TWEAK_DEFAULTS,
+  usePrefsStore,
+  type Tweaks as StoreTweaks,
+} from '../stores/usePrefsStore.js';
 
-export interface Tweaks {
-  theme: 'dark' | 'paper';
-  accentHue: number;
-  showRail: boolean;
-  showTray: boolean;
-}
+export type Tweaks = StoreTweaks;
 
-export const TWEAK_DEFAULTS: Tweaks = {
-  theme: 'dark',
-  accentHue: 45,
-  showRail: true,
-  showTray: true,
-};
-
-const STORAGE_KEY = 'kanbots:tweaks';
-
-function readTweaks(): Tweaks {
-  if (typeof window === 'undefined') return TWEAK_DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return TWEAK_DEFAULTS;
-    const parsed = JSON.parse(raw) as Partial<Tweaks>;
-    return { ...TWEAK_DEFAULTS, ...parsed };
-  } catch {
-    return TWEAK_DEFAULTS;
-  }
-}
-
-function writeTweaks(t: Tweaks): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
-  } catch {
-    // ignore quota / disabled storage
-  }
-}
+// Re-exported for backward compatibility with consumers importing the
+// defaults from this module.
+export const TWEAK_DEFAULTS = STORE_TWEAK_DEFAULTS;
 
 function applyTheme(t: Tweaks): void {
   if (typeof document === 'undefined') return;
@@ -59,23 +33,38 @@ function applyTheme(t: Tweaks): void {
   );
 }
 
+/**
+ * Thin wrapper around the unified prefs store. Persistence and the DOM
+ * theme-application side-effect live here; the canonical state lives in
+ * `usePrefsStore.tweaks` and is persisted to the `kanbots:prefs` localStorage
+ * key. The wrapper preserves the existing `{ tweaks, set, reset }` shape so
+ * call sites don't change.
+ */
 export function useTweaks(): {
   tweaks: Tweaks;
   set: <K extends keyof Tweaks>(key: K, value: Tweaks[K]) => void;
   reset: () => void;
 } {
-  const [tweaks, setTweaks] = useState<Tweaks>(() => readTweaks());
+  const tweaks = usePrefsStore((s) => s.tweaks);
+  const setTweakStore = usePrefsStore((s) => s.setTweak);
+  const resetTweaksStore = usePrefsStore((s) => s.resetTweaks);
 
+  // Apply theme to <html> on every change. Lives here (rather than the
+  // store) because it touches the DOM — the store stays a pure data layer.
   useEffect(() => {
     applyTheme(tweaks);
-    writeTweaks(tweaks);
   }, [tweaks]);
 
-  const set = useCallback(<K extends keyof Tweaks>(key: K, value: Tweaks[K]) => {
-    setTweaks((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  const set = useCallback(
+    <K extends keyof Tweaks>(key: K, value: Tweaks[K]) => {
+      setTweakStore(key, value);
+    },
+    [setTweakStore],
+  );
 
-  const reset = useCallback(() => setTweaks(TWEAK_DEFAULTS), []);
+  const reset = useCallback(() => {
+    resetTweaksStore();
+  }, [resetTweaksStore]);
 
   return { tweaks, set, reset };
 }

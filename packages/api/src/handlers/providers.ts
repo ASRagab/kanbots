@@ -23,7 +23,19 @@ export interface ProvidersHandlerDeps {
   providers: ProvidersRuntime;
 }
 
-const PROVIDER_ID_SCHEMA = z.enum(['claude-code', 'codex-cli']);
+const PROVIDER_ID_SCHEMA = z.enum([
+  'claude-code',
+  'codex-cli',
+  'gemini-cli',
+  'amp-cli',
+  'cursor-cli',
+  'copilot-cli',
+  'opencode-cli',
+  'droid-cli',
+  'ccr-cli',
+  'qwen-cli',
+  'acp',
+]);
 
 const saveSchema = z
   .object({
@@ -59,16 +71,12 @@ export async function save(
   const parsed = parseArgs(saveSchema, args);
   const id = parsed.id as ProviderId;
 
-  // Both supported providers manage their own credentials externally:
-  // claude-code via OAuth, codex-cli via `codex login` / OPENAI_API_KEY.
-  // The app never stores API keys.
+  // All supported providers manage their own credentials externally.
+  // The app never stores API keys — each CLI either drives its own OAuth
+  // (`claude-code`, `codex-cli`, etc.) or reads a well-known env var.
   if (parsed.apiKey !== undefined && parsed.apiKey !== null && parsed.apiKey !== '') {
     throw badRequest(
-      `${id} does not accept an API key here. ${
-        id === 'claude-code'
-          ? 'Sign in via the desktop app.'
-          : 'Use `codex login` or set OPENAI_API_KEY in your environment.'
-      }`,
+      `${id} does not accept an API key here. ${apiKeyHintFor(id)}`,
     );
   }
 
@@ -93,7 +101,8 @@ export async function testConnection(
       credentialsPath: claudeCodeCredentialsPath(),
     };
   } else {
-    // codex-cli: validate is a no-op; the adapter doesn't read creds.
+    // codex-cli, gemini-cli, amp-cli: validate is a no-op; their adapters
+    // don't read creds — they rely on the CLI finding its own auth.
     creds = { kind: 'api-key', apiKey: '' };
   }
 
@@ -130,10 +139,7 @@ function readPayload(deps: ProvidersHandlerDeps): ProvidersPayload {
   const providers = rows.map((row) => ({
     id: row.id,
     enabled: row.enabled,
-    hasKey:
-      row.id === 'claude-code'
-        ? deps.providers.hasClaudeCodeCredentials()
-        : hasCodexCliCredentials(),
+    hasKey: detectProviderCredentials(row.id, deps),
     defaultModel: row.defaultModel,
     keyEncryption: row.keyEncryption,
     lastValidatedAt: row.lastValidatedAt,
@@ -165,6 +171,157 @@ function hasCodexCliCredentials(): boolean {
   if (home && existsSync(`${home}/.codex/auth.json`)) return true;
   if (process.env.OPENAI_API_KEY) return true;
   return false;
+}
+
+function hasGeminiCliCredentials(): boolean {
+  // gemini finds its own auth — `gemini /login` writes
+  // ~/.gemini/oauth_creds.json; GEMINI_API_KEY in the ambient environment
+  // is the alternate path.
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.gemini/oauth_creds.json`)) return true;
+  if (process.env.GEMINI_API_KEY) return true;
+  return false;
+}
+
+function hasAmpCliCredentials(): boolean {
+  // amp finds its own auth — `amp /login` writes under ~/.config/amp/;
+  // AMP_API_KEY in the ambient environment is the alternate path.
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.config/amp/settings.json`)) return true;
+  if (home && existsSync(`${home}/.config/amp/auth.json`)) return true;
+  if (process.env.AMP_API_KEY) return true;
+  return false;
+}
+
+function hasCursorCliCredentials(): boolean {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.cursor/config.json`)) return true;
+  if (home && existsSync(`${home}/.cursor`)) return true;
+  if (process.env.CURSOR_API_KEY) return true;
+  return false;
+}
+
+function hasCopilotCliCredentials(): boolean {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.copilot/config.json`)) return true;
+  if (home && existsSync(`${home}/.copilot`)) return true;
+  if (home && existsSync(`${home}/.config/gh/hosts.yml`)) return true;
+  if (process.env.GITHUB_TOKEN) return true;
+  return false;
+}
+
+function hasOpencodeCliCredentials(): boolean {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.local/share/opencode/auth.json`)) return true;
+  if (home && existsSync(`${home}/.config/opencode`)) return true;
+  if (process.env.OPENCODE_AUTH_TOKEN) return true;
+  if (process.env.ANTHROPIC_API_KEY) return true;
+  if (process.env.OPENAI_API_KEY) return true;
+  return false;
+}
+
+function hasDroidCliCredentials(): boolean {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.factory/config.json`)) return true;
+  if (home && existsSync(`${home}/.factory/mcp.json`)) return true;
+  if (home && existsSync(`${home}/.factory`)) return true;
+  if (process.env.FACTORY_API_KEY) return true;
+  return false;
+}
+
+function hasCcrCliCredentials(): boolean {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.claude-code-router/config.json`)) return true;
+  if (home && existsSync(`${home}/.claude-code-router`)) return true;
+  if (process.env.ANTHROPIC_API_KEY) return true;
+  if (process.env.OPENAI_API_KEY) return true;
+  return false;
+}
+
+function hasQwenCliCredentials(): boolean {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  if (home && existsSync(`${home}/.qwen/settings.json`)) return true;
+  if (home && existsSync(`${home}/.qwen/installation_id`)) return true;
+  if (home && existsSync(`${home}/.qwen`)) return true;
+  if (process.env.DASHSCOPE_API_KEY) return true;
+  if (process.env.QWEN_API_KEY) return true;
+  return false;
+}
+
+function hasAcpCredentials(): boolean {
+  // The ACP meta-provider delegates to whichever binary is configured.
+  // Treat the presence of an override env var as a positive signal; if
+  // none is set, fall through to the default gemini path so the row
+  // surfaces as "configured" whenever Gemini is signed in.
+  if (process.env.KANBOTS_ACP_COMMAND && process.env.KANBOTS_ACP_COMMAND.trim().length > 0) {
+    return true;
+  }
+  return hasGeminiCliCredentials();
+}
+
+function apiKeyHintFor(id: ProviderId): string {
+  switch (id) {
+    case 'claude-code':
+      return 'Sign in via the desktop app.';
+    case 'codex-cli':
+      return 'Use `codex login` or set OPENAI_API_KEY in your environment.';
+    case 'gemini-cli':
+      return 'Run `gemini /login` or set GEMINI_API_KEY in your environment.';
+    case 'amp-cli':
+      return 'Run `amp /login` or set AMP_API_KEY in your environment.';
+    case 'cursor-cli':
+      return 'Run `cursor-agent login` or set CURSOR_API_KEY in your environment.';
+    case 'copilot-cli':
+      return 'Run `gh auth login` or sign in via the Copilot CLI.';
+    case 'opencode-cli':
+      return 'Run `opencode auth` to configure providers.';
+    case 'droid-cli':
+      return 'Run `droid login` to sign in to Factory.';
+    case 'ccr-cli':
+      return 'Configure `~/.claude-code-router/config.json` with your provider key.';
+    case 'qwen-cli':
+      return 'Run `qwen-code login` or set DASHSCOPE_API_KEY in your environment.';
+    case 'acp':
+      return 'ACP delegates to a configured agent — set `KANBOTS_ACP_COMMAND` or use the default.';
+    default: {
+      const exhaustive: never = id;
+      throw new Error(`unknown provider id: ${String(exhaustive)}`);
+    }
+  }
+}
+
+function detectProviderCredentials(
+  id: ProviderId,
+  deps: ProvidersHandlerDeps,
+): boolean {
+  switch (id) {
+    case 'claude-code':
+      return deps.providers.hasClaudeCodeCredentials();
+    case 'codex-cli':
+      return hasCodexCliCredentials();
+    case 'gemini-cli':
+      return hasGeminiCliCredentials();
+    case 'amp-cli':
+      return hasAmpCliCredentials();
+    case 'cursor-cli':
+      return hasCursorCliCredentials();
+    case 'copilot-cli':
+      return hasCopilotCliCredentials();
+    case 'opencode-cli':
+      return hasOpencodeCliCredentials();
+    case 'droid-cli':
+      return hasDroidCliCredentials();
+    case 'ccr-cli':
+      return hasCcrCliCredentials();
+    case 'qwen-cli':
+      return hasQwenCliCredentials();
+    case 'acp':
+      return hasAcpCredentials();
+    default: {
+      const exhaustive: never = id;
+      throw new Error(`unknown provider id: ${String(exhaustive)}`);
+    }
+  }
 }
 
 function claudeCodeCredentialsPath(): string {

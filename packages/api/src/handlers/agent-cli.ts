@@ -5,11 +5,35 @@ import type { SlashCommandPayload } from '../bridge.js';
 import { badRequest, parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
 
-const SUPPORTED_AGENTS: readonly ProviderId[] = ['claude-code', 'codex-cli'];
+const SUPPORTED_AGENTS: readonly ProviderId[] = [
+  'claude-code',
+  'codex-cli',
+  'gemini-cli',
+  'amp-cli',
+  'cursor-cli',
+  'copilot-cli',
+  'opencode-cli',
+  'droid-cli',
+  'ccr-cli',
+  'qwen-cli',
+  'acp',
+];
 
 const slashCommandsSchema = z
   .object({
-    agent: z.enum(['claude-code', 'codex-cli']),
+    agent: z.enum([
+      'claude-code',
+      'codex-cli',
+      'gemini-cli',
+      'amp-cli',
+      'cursor-cli',
+      'copilot-cli',
+      'opencode-cli',
+      'droid-cli',
+      'ccr-cli',
+      'qwen-cli',
+      'acp',
+    ]),
   })
   .strict();
 

@@ -6,7 +6,19 @@ import type {
   ProviderSettings,
 } from '../types.js';
 
-const PROVIDER_IDS: readonly ProviderId[] = ['claude-code', 'codex-cli'];
+const PROVIDER_IDS: readonly ProviderId[] = [
+  'claude-code',
+  'codex-cli',
+  'gemini-cli',
+  'amp-cli',
+  'cursor-cli',
+  'copilot-cli',
+  'opencode-cli',
+  'droid-cli',
+  'ccr-cli',
+  'qwen-cli',
+  'acp',
+];
 
 interface ProviderConfigRow {
   id: string;

@@ -13,6 +13,7 @@ import * as agentRuns from './agent-runs.js';
 import * as analytics from './analytics.js';
 import * as attachments from './attachments.js';
 import * as autopilot from './autopilot.js';
+import * as cardTemplates from './card-templates.js';
 import * as cards from './cards.js';
 import * as chat from './chat.js';
 import * as composer from './composer.js';
@@ -20,8 +21,10 @@ import * as config from './config.js';
 import * as cooldown from './cooldown.js';
 import * as cost from './cost.js';
 import * as decisions from './decisions.js';
+import * as issueRelations from './issue-relations.js';
 import * as issues from './issues.js';
 import * as learnings from './learnings.js';
+import * as prComments from './pr-comments.js';
 import * as providers from './providers.js';
 import type { ProvidersHandlerDeps } from './providers.js';
 import * as reviewComments from './review-comments.js';
@@ -83,6 +86,10 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'issues:request-changes': (args) => agentActions.requestChanges(deps, args),
     'issues:split': (args) => agentActions.split(deps, args),
     'issues:reviewer': (args) => agentActions.reviewer(deps, args),
+    'issue-relations:list-children': (args) => issueRelations.listChildren(deps, args),
+    'issue-relations:list-parents': (args) => issueRelations.listParents(deps, args),
+    'issue-relations:add': (args) => issueRelations.add(deps, args),
+    'issue-relations:remove': (args) => issueRelations.remove(deps, args),
     'ship:status': (args) => ship.status(deps, args),
     'ship:commit': (args) => ship.commit(deps, args),
     'ship:merge': (args) => ship.merge(deps, args),
@@ -103,12 +110,20 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'agent-runs:fork': (args) => agentRuns.fork(deps, args),
     'agent-runs:promote-commit': (args) => agentRuns.promoteCommit(deps, args),
     'agent-runs:promote-pr': (args) => agentRuns.promotePr(deps, args),
+    'agent-runs:draft-pr-description': (args) =>
+      agentRuns.draftPrDescription(deps, args),
     'agent-runs:hunks:list': (args) => agentRuns.listHunks(deps, args),
     'agent-runs:events:subscribe': (args) => agentEvents.subscribe(opts, args),
     'agent-runs:events:unsubscribe': (args) =>
       agentEvents.unsubscribe(opts, args),
     'cards:resolve': (args) => cards.resolve(deps, args),
     'cards:dismiss': (args) => cards.dismiss(deps, args),
+    'card-templates:list': () => cardTemplates.list(deps),
+    'card-templates:create': (args) => cardTemplates.create(deps, args),
+    'card-templates:update': (args) => cardTemplates.update(deps, args),
+    'card-templates:delete': (args) => cardTemplates.remove(deps, args),
+    'card-templates:reorder': (args) => cardTemplates.reorder(deps, args),
+    'card-templates:instantiate': (args) => cardTemplates.instantiate(deps, args),
     'decisions:pending': () => decisions.pending(deps),
     'cost:today': () => cost.today(deps),
     'cost:usage': () => cost.usage(deps),
@@ -122,6 +137,20 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'workspace:get-scripts': () => workspace.getScripts(deps),
     'workspace:set-scripts': (args) => workspace.setScripts(deps, args),
     'workspace:run-script': (args) => workspace.runScript(deps, args),
+    'workspace:get-acp-command': () => workspace.getAcpCommand(deps),
+    'workspace:set-acp-command': (args) => workspace.setAcpCommand(deps, args),
+    'workspace:repos-list': () => workspace.listRepos(deps),
+    'workspace:repos-add': (args) => workspace.addRepo(deps, args),
+    'workspace:repos-remove': (args) => workspace.removeRepo(deps, args),
+    'workspace:repos-set-primary': (args) => workspace.setPrimaryRepo(deps, args),
+    'workspace:repos-set-target-branch': (args) =>
+      workspace.setRepoTargetBranch(deps, args),
+    'workspace:repos-set-display-name': (args) =>
+      workspace.setRepoDisplayName(deps, args),
+    'workspace:repo-status': (args) => workspace.repoStatus(deps, args),
+    'workspace:open-repo-in-ide': (args) => workspace.openRepoInIde(deps, args),
+    'pr-comments:list': (args) => prComments.list(deps, args),
+    'pr-comments:reply': (args) => prComments.reply(deps, args),
     'review-comments:list': (args) => reviewComments.list(deps, args),
     'review-comments:list-for-file': (args) => reviewComments.listForFile(deps, args),
     'review-comments:add': (args) => reviewComments.add(deps, args),
@@ -154,6 +183,15 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'chat:delete': (args) => chat.deleteConversation(deps, args),
     'chat:post-message': (args) => chat.postMessage(deps, args),
     'chat:stop-run': (args) => chat.stopRun(deps, args),
+    'chat:sessions:list': (args) => chat.listSessions(deps, args),
+    'chat:sessions:create': (args) => chat.createSession(deps, args),
+    'chat:sessions:rename': (args) => chat.renameSession(deps, args),
+    'chat:sessions:delete': (args) => chat.deleteSession(deps, args),
+    'chat:sessions:set-active': (args) => chat.setActiveSession(deps, args),
+    'chat:thread-sessions:list': (args) => chat.listThreadSessions(deps, args),
+    'chat:thread-sessions:create': (args) => chat.createThreadSession(deps, args),
+    'chat:thread-sessions:rename': (args) => chat.renameThreadSession(deps, args),
+    'chat:thread-sessions:delete': (args) => chat.deleteThreadSession(deps, args),
     'learnings:list': (args) => learnings.list(deps, args),
     'learnings:delete': (args) => learnings.deleteLearning(deps, args),
     'learnings:update': (args) => learnings.update(deps, args),
@@ -161,6 +199,7 @@ export function createHandlers(opts: CreateHandlersOptions): Handlers {
     'analytics:rollup': (args) => analytics.rollup(deps, args),
     'analytics:time-series': (args) => analytics.timeSeries(deps, args),
     'analytics:frontier': (args) => analytics.frontier(deps, args),
+    'analytics:recent-activity': (args) => analytics.recentActivity(deps, args),
   };
   return map;
 }
@@ -187,7 +226,18 @@ export function createProvidersHandlers(deps: ProvidersHandlerDeps): ProvidersHa
 
 export type ChatHandlers = Pick<
   Handlers,
-  'chat:list' | 'chat:create' | 'chat:get' | 'chat:rename' | 'chat:delete' | 'chat:post-message' | 'chat:stop-run'
+  | 'chat:list'
+  | 'chat:create'
+  | 'chat:get'
+  | 'chat:rename'
+  | 'chat:delete'
+  | 'chat:post-message'
+  | 'chat:stop-run'
+  | 'chat:sessions:list'
+  | 'chat:sessions:create'
+  | 'chat:sessions:rename'
+  | 'chat:sessions:delete'
+  | 'chat:sessions:set-active'
 >;
 
 export interface ChatHandlerDeps {
@@ -215,5 +265,10 @@ export function createChatHandlers(deps: ChatHandlerDeps): ChatHandlers {
     'chat:delete': (args) => chat.deleteConversation(fullDeps, args),
     'chat:post-message': (args) => chat.postMessage(fullDeps, args),
     'chat:stop-run': (args) => chat.stopRun(fullDeps, args),
+    'chat:sessions:list': (args) => chat.listSessions(fullDeps, args),
+    'chat:sessions:create': (args) => chat.createSession(fullDeps, args),
+    'chat:sessions:rename': (args) => chat.renameSession(fullDeps, args),
+    'chat:sessions:delete': (args) => chat.deleteSession(fullDeps, args),
+    'chat:sessions:set-active': (args) => chat.setActiveSession(fullDeps, args),
   };
 }

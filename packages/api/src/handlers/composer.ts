@@ -25,14 +25,39 @@ export async function draft(
 const suggestSchema = z
   .object({
     personaPrompt: z.string().min(1).max(8_000),
-    provider: z.enum(['claude-code', 'codex-cli']).optional(),
+    provider: z
+      .enum([
+        'claude-code',
+        'codex-cli',
+        'gemini-cli',
+        'amp-cli',
+        'cursor-cli',
+        'copilot-cli',
+        'opencode-cli',
+        'droid-cli',
+        'ccr-cli',
+        'qwen-cli',
+        'acp',
+      ])
+      .optional(),
     userNotes: z.string().max(4_000).optional(),
   })
   .strict();
 
 export interface SuggestArgs {
   personaPrompt: string;
-  provider?: 'claude-code' | 'codex-cli';
+  provider?:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp';
   userNotes?: string;
 }
 

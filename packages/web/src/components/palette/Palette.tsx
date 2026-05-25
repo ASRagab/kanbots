@@ -150,6 +150,24 @@ export function Palette({
         },
       },
       {
+        id: 'open-workspace-repos',
+        label: 'Open Repos settings',
+        category: 'quick',
+        onPick: () => {
+          onClose();
+          window.dispatchEvent(new CustomEvent('kanbots:open-workspace-repos'));
+        },
+      },
+      {
+        id: 'open-card-templates',
+        label: 'Open Card templates settings',
+        category: 'quick',
+        onPick: () => {
+          onClose();
+          window.dispatchEvent(new CustomEvent('kanbots:open-card-templates'));
+        },
+      },
+      {
         id: 'run-setup-script',
         label: 'Run setup script',
         category: 'quick',

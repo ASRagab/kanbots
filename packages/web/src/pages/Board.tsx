@@ -8,42 +8,36 @@ import {
   type DragStartEvent,
   type UniqueIdentifier,
 } from '@dnd-kit/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { api } from '../api.js';
 import { AutopilotLaunchModal } from '../components/modals/AutopilotLaunchModal.js';
+import { BoardViewsModal } from '../components/modals/BoardViewsModal.js';
 import { BoardErrorBanner } from '../components/board/BoardErrorBanner.js';
 import { BoardFilters } from '../components/board/BoardFilters.js';
 import { BoardToolbar } from '../components/board/BoardToolbar.js';
 import { BoardUsageRow } from '../components/board/BoardUsageRow.js';
-import { CardPreview } from '../components/Card.js';
+import { BulkActionBar, type BulkStatusTarget } from '../components/board/BulkActionBar.js';
+import { CardPreview, type CardSelectModifiers } from '../components/Card.js';
 import { Column, type SuggestActivity } from '../components/Column.js';
 import { PersonaPickerModal } from '../components/modals/PersonaPickerModal.js';
 import { useBoardAgentStreams } from '../hooks/useBoardAgentStreams.js';
+import { useBoardViews, boardViewStateEqual } from '../hooks/useBoardViews.js';
+import { useCardSelection } from '../hooks/useCardSelection.js';
 import { useCloudBoardStreams } from '../hooks/useCloudBoardStreams.js';
 import { getCloudCtx } from '../api.js';
 import { useBoardFilters } from '../hooks/useBoardFilters.js';
 import { useFetch } from '../hooks/useFetch.js';
+import { useFocusedRepo } from '../hooks/useFocusedRepo.js';
 import { useIssues, dispatchIssuesRefetch } from '../hooks/useIssues.js';
 import { useSelection } from '../hooks/useSelection.js';
+import { useWorkspace } from '../hooks/useWorkspace.js';
+import { usePrefsStore, type BoardSortMode } from '../stores/usePrefsStore.js';
 import { COLUMNS, priorityFromLabels, withStatus, type Priority } from '../labels.js';
 import type { Persona } from '../personas.js';
 import type { Issue, ProviderId, StatusKey } from '../types.js';
 
-type SortMode = 'manual' | 'priority' | 'createdAt' | 'updatedAt';
-const SORT_MODES: readonly SortMode[] = ['manual', 'priority', 'createdAt', 'updatedAt'];
-const SORT_KEY = 'kanbots:board:sortMode';
+type SortMode = BoardSortMode;
 const PRIORITY_RANK: Record<Priority, number> = { p0: 0, p1: 1, p2: 2, p3: 3 };
-
-function readSortMode(): SortMode {
-  if (typeof window === 'undefined') return 'manual';
-  try {
-    const raw = window.localStorage.getItem(SORT_KEY);
-    if (raw !== null && (SORT_MODES as readonly string[]).includes(raw)) return raw as SortMode;
-  } catch {
-    // ignore
-  }
-  return 'manual';
-}
 
 function sortIssues(issues: Issue[], mode: SortMode): Issue[] {
   if (mode === 'manual') return issues;
@@ -115,9 +109,12 @@ export interface BoardProps {
   onOpenDetail?: (issueNumber: number) => void;
   onOpenCreate?: () => void;
   onOpenPalette?: () => void;
+  /** Optional handler for the toolbar's workspace cost meter — typically
+   *  opens the Stats & cost modal. Omit to render the meter as static. */
+  onOpenStats?: () => void;
 }
 
-export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps = {}) {
+export function Board({ onOpenDetail, onOpenCreate, onOpenPalette, onOpenStats }: BoardProps = {}) {
   const { data: config } = useFetch('config', () => api.config());
   const { issues, loading, error, mutate } = useIssues();
   const { data: costToday, refetch: refetchCostToday } = useFetch('cost:today', () =>
@@ -127,37 +124,43 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
     api.costUsage(),
   );
   const filterApi = useBoardFilters(issues);
-  const [sortMode, setSortMode] = useState<SortMode>(() => readSortMode());
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(SORT_KEY, sortMode);
-    } catch {
-      // ignore
-    }
-  }, [sortMode]);
+  const { focusedRepoId } = useFocusedRepo();
+  const sortMode = usePrefsStore((s) => s.board.sortMode);
+  const setSortMode = usePrefsStore((s) => s.setBoardSortMode);
 
-  // Poll the usage meters once a minute. The backend caches OAuth /usage for
-  // 60s anyway, so polling faster just thrashes the renderer for no extra
-  // freshness. Pause when the tab is hidden so a background window doesn't
-  // burn requests.
+  // Poll the usage meters (claude.ai OAuth windows) once a minute — the
+  // backend caches /usage for 60s anyway, so polling faster just thrashes
+  // the renderer. The workspace cost rollup (`cost:today`) refreshes on a
+  // tighter 30s cadence so the toolbar meter feels responsive as agent
+  // runs accumulate spend. Both pause when the tab is hidden so a
+  // background window doesn't burn requests.
   useEffect(() => {
     let cancelled = false;
-    function tick(): void {
+    function tickUsage(): void {
       if (cancelled) return;
       if (typeof document === 'undefined' || !document.hidden) {
         void refetchCostUsage();
+      }
+    }
+    function tickToday(): void {
+      if (cancelled) return;
+      if (typeof document === 'undefined' || !document.hidden) {
         void refetchCostToday();
       }
     }
-    const id = window.setInterval(tick, 60_000);
+    const usageId = window.setInterval(tickUsage, 60_000);
+    const todayId = window.setInterval(tickToday, 30_000);
     function onVisibility(): void {
-      if (!document.hidden) tick();
+      if (!document.hidden) {
+        tickUsage();
+        tickToday();
+      }
     }
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearInterval(usageId);
+      window.clearInterval(todayId);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [refetchCostUsage, refetchCostToday]);
@@ -170,6 +173,11 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
   const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   const [autopilotLaunchOpen, setAutopilotLaunchOpen] = useState(false);
   const [selectedNumber, setSelectedNumber] = useSelection();
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [manageViewsOpen, setManageViewsOpen] = useState(false);
+  const cardSelection = useCardSelection();
+  const workspaceMeta = useWorkspace();
+  const viewsApi = useBoardViews(workspaceMeta.workspace.id);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -250,6 +258,46 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
     };
   }, [list, sortMode]);
 
+  // The next three memos must be declared before the loading/error guards
+  // so the hook-call order stays stable across renders. They depend only
+  // on values already computed above (grouped, filterApi, sortMode,
+  // viewsApi) so hoisting them is a no-op semantically — the prior
+  // location after the guards caused a `useMemo` to be skipped on the
+  // first render and added on later renders, tripping the Rules of Hooks.
+
+  const orderedNumbers = useMemo<number[]>(() => {
+    const out: number[] = [];
+    for (const issue of grouped.untagged) out.push(issue.number);
+    if (filterApi.includeBacklog) {
+      for (const issue of grouped.byKey.backlog) out.push(issue.number);
+    }
+    for (const issue of grouped.byKey.todo) out.push(issue.number);
+    for (const issue of grouped.byKey.inProgress) out.push(issue.number);
+    for (const issue of grouped.byKey.review) out.push(issue.number);
+    for (const issue of grouped.byKey.done) out.push(issue.number);
+    return out;
+  }, [grouped, filterApi.includeBacklog]);
+
+  const currentViewState = useMemo(
+    () => ({
+      filters: {
+        hasAgent: filterApi.filters.hasAgent,
+        priorities: [...filterApi.filters.priorities],
+        areas: [...filterApi.filters.areas],
+      },
+      sortMode,
+      includeBacklog: filterApi.includeBacklog,
+    }),
+    [filterApi.filters, sortMode, filterApi.includeBacklog],
+  );
+
+  const matchedViewId = useMemo(() => {
+    for (const v of viewsApi.views) {
+      if (boardViewStateEqual(v, currentViewState)) return v.id;
+    }
+    return null;
+  }, [viewsApi.views, currentViewState]);
+
   if (loading && issues.length === 0) {
     return (
       <div className="kb-app" style={{ padding: 32, color: 'var(--ink-2)' }}>
@@ -320,7 +368,10 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
 
     if (targetStatus === 'inProgress' && current.activeRun == null) {
       try {
-        await api.dispatchIssue(issueNumber, { fromStatus });
+        await api.dispatchIssue(issueNumber, {
+          fromStatus,
+          ...(focusedRepoId !== null ? { repoId: focusedRepoId } : {}),
+        });
         dispatchIssuesRefetch();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -362,6 +413,185 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
     }
   }
 
+  /**
+   * Stable rendered order across columns. Used by shift-range selection
+   * so a range can span columns the same way a Trello / Linear board
+   * does. Order matches the visible top-to-bottom layout:
+   * inbox → backlog (if shown) → todo → inProgress → review → done.
+   *
+   * NOTE: declared at the top of the component (above the loading/error
+   * guards) so the hook order stays stable across renders. See the
+   * `grouped` / `currentViewState` / `matchedViewId` comments for the
+   * same constraint.
+   */
+  // (`orderedNumbers` / `currentViewState` / `matchedViewId` are declared
+  // earlier in the function — see the block before the loading/error
+  // early returns. Kept here as documentation only.)
+
+  function handleCardSelect(n: number, modifiers: CardSelectModifiers): void {
+    if (modifiers.shiftKey) {
+      cardSelection.selectRange(cardSelection.anchor, n, orderedNumbers);
+      return;
+    }
+    if (modifiers.metaOrCtrlKey) {
+      cardSelection.toggle(n);
+      return;
+    }
+    // Plain click — focus the card and clear any multi-select. The
+    // selection ring (single) lives on the route hash; the multi-select
+    // ring lives in the ephemeral hook state.
+    if (cardSelection.selected.size > 0) cardSelection.clear();
+    setSelectedNumber(n);
+  }
+
+  function handleBoardBackgroundClick(e: ReactMouseEvent<HTMLDivElement>): void {
+    // Only clear the multi-select if the click landed on the empty
+    // background — clicks that bubble from a card should be left alone.
+    if (e.target === e.currentTarget && cardSelection.selected.size > 0) {
+      cardSelection.clear();
+    }
+  }
+
+  async function withBulkBusy<T>(fn: () => Promise<T>): Promise<T | null> {
+    setBulkBusy(true);
+    setMoveError(null);
+    try {
+      return await fn();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setMoveError(`Bulk action failed: ${message}`);
+      return null;
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  // v1 of bulk ops piggybacks on the per-issue endpoints via
+  // Promise.allSettled so we don't have to ship a new backend channel
+  // for what's mostly a fan-out. If any subset fails, the rest still
+  // succeed and the error banner surfaces an aggregate message.
+  async function bulkMoveToStatus(status: BulkStatusTarget): Promise<void> {
+    const targets = [...cardSelection.selected];
+    if (targets.length === 0) return;
+    await withBulkBusy(async () => {
+      const before = issues;
+      const results = await Promise.allSettled(
+        targets.map(async (n) => {
+          const issue = before.find((i) => i.number === n);
+          if (!issue) return null;
+          const nextLabels = withStatus(issue.labels, status);
+          return api.updateIssue(n, { labels: nextLabels });
+        }),
+      );
+      dispatchIssuesRefetch();
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        throw new Error(`${failed} of ${targets.length} card(s) failed to move`);
+      }
+    });
+  }
+
+  async function bulkAddLabels(labels: string[]): Promise<void> {
+    const targets = [...cardSelection.selected];
+    if (targets.length === 0 || labels.length === 0) return;
+    await withBulkBusy(async () => {
+      const before = issues;
+      const results = await Promise.allSettled(
+        targets.map(async (n) => {
+          const issue = before.find((i) => i.number === n);
+          if (!issue) return null;
+          const set = new Set(issue.labels);
+          for (const l of labels) set.add(l);
+          return api.updateIssue(n, { labels: [...set] });
+        }),
+      );
+      dispatchIssuesRefetch();
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        throw new Error(`${failed} of ${targets.length} card(s) failed to label`);
+      }
+    });
+  }
+
+  async function bulkDispatch(): Promise<void> {
+    const targets = [...cardSelection.selected];
+    if (targets.length === 0) return;
+    await withBulkBusy(async () => {
+      const before = issues;
+      const results = await Promise.allSettled(
+        targets.map(async (n) => {
+          const issue = before.find((i) => i.number === n);
+          if (!issue) return null;
+          if (issue.activeRun !== null) return null;
+          return api.dispatchIssue(n, {
+            fromStatus: issue.status,
+            ...(focusedRepoId !== null ? { repoId: focusedRepoId } : {}),
+          });
+        }),
+      );
+      dispatchIssuesRefetch();
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        throw new Error(
+          `${failed} of ${targets.length} card(s) failed to dispatch`,
+        );
+      }
+    });
+  }
+
+  async function bulkArchive(): Promise<void> {
+    const targets = [...cardSelection.selected];
+    if (targets.length === 0) return;
+    const ok = window.confirm(
+      `Archive ${targets.length} card${targets.length === 1 ? '' : 's'}?`,
+    );
+    if (!ok) return;
+    await withBulkBusy(async () => {
+      const results = await Promise.allSettled(
+        targets.map((n) => api.archiveIssue(n)),
+      );
+      dispatchIssuesRefetch();
+      cardSelection.clear();
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        throw new Error(
+          `${failed} of ${targets.length} card(s) failed to archive`,
+        );
+      }
+    });
+  }
+
+  // --- Saved views ---------------------------------------------------------
+  //
+  // (`currentViewState` + `matchedViewId` are declared earlier in the
+  // function — see the block before the loading/error early returns.)
+
+  function applyView(id: string | null): void {
+    viewsApi.setActiveView(id);
+    if (id === null) {
+      // Reset to a clean slate.
+      filterApi.clear();
+      setSortMode('manual');
+      if (filterApi.includeBacklog) filterApi.toggleIncludeBacklog();
+      return;
+    }
+    const v = viewsApi.views.find((x) => x.id === id);
+    if (!v) return;
+    // Reset and re-apply each filter so we don't carry over stale state.
+    filterApi.clear();
+    if (v.filters.hasAgent) filterApi.toggleHasAgent();
+    for (const p of v.filters.priorities) filterApi.togglePriority(p);
+    for (const a of v.filters.areas) filterApi.toggleArea(a);
+    setSortMode(v.sortMode);
+    if (filterApi.includeBacklog !== v.includeBacklog) {
+      filterApi.toggleIncludeBacklog();
+    }
+  }
+
+  function saveCurrentAsView(name: string): void {
+    viewsApi.saveView(name, currentViewState);
+  }
+
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       <BoardToolbar
@@ -381,6 +611,11 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
         onOpenPalette={onOpenPalette}
         onOpenAutopilot={() => setAutopilotLaunchOpen(true)}
         onCreate={onOpenCreate}
+        // null while the first fetch is in flight so the meter shows its
+        // placeholder; once loaded it lights up in the clay accent when
+        // any spend has accumulated this calendar day.
+        costTodayUsd={costToday === null ? null : costToday.totalUsd}
+        {...(onOpenStats ? { onOpenCostMeter: onOpenStats } : {})}
       />
       <BoardFilters
         stats={stats}
@@ -399,6 +634,14 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
           onToggleIncludeBacklog: filterApi.toggleIncludeBacklog,
           onChangeSortMode: setSortMode,
           onClear: filterApi.clear,
+          views: {
+            views: viewsApi.views.map((v) => ({ id: v.id, name: v.name })),
+            activeViewId: viewsApi.activeViewId,
+            matchedViewId,
+            onPickView: applyView,
+            onSaveAsView: saveCurrentAsView,
+            onManageViews: () => setManageViewsOpen(true),
+          },
         }}
       />
       <BoardUsageRow
@@ -406,7 +649,7 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
         sevenDay={costUsage?.sevenDay ?? null}
       />
       <BoardErrorBanner message={moveError} onDismiss={() => setMoveError(null)} />
-      <div className="kb-board">
+      <div className="kb-board" onClick={handleBoardBackgroundClick}>
         {COLUMNS.filter((col) => filterApi.includeBacklog || col.key !== 'backlog').map((col) => (
           <Column
             key={String(col.key)}
@@ -415,8 +658,9 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
             label={col.label}
             issues={col.key === null ? grouped.untagged : grouped.byKey[col.key]}
             selectedNumber={selectedNumber}
+            multiSelected={cardSelection.selected}
             liveByRun={liveByRun}
-            onSelect={setSelectedNumber}
+            onSelect={handleCardSelect}
             onOpen={(n) => {
               setSelectedNumber(n);
               onOpenDetail?.(n);
@@ -445,6 +689,26 @@ export function Board({ onOpenDetail, onOpenCreate, onOpenPalette }: BoardProps 
         <AutopilotLaunchModal
           onClose={() => setAutopilotLaunchOpen(false)}
           onStarted={() => dispatchIssuesRefetch()}
+        />
+      ) : null}
+      {cardSelection.selected.size > 0 ? (
+        <BulkActionBar
+          count={cardSelection.selected.size}
+          busy={bulkBusy}
+          onMoveToStatus={(s) => void bulkMoveToStatus(s)}
+          onAddLabels={(labels) => void bulkAddLabels(labels)}
+          onDispatch={() => void bulkDispatch()}
+          onArchive={() => void bulkArchive()}
+          onClear={() => cardSelection.clear()}
+        />
+      ) : null}
+      {manageViewsOpen ? (
+        <BoardViewsModal
+          views={viewsApi.views}
+          onRename={(id, name) => viewsApi.updateView(id, { name })}
+          onDelete={viewsApi.deleteView}
+          onReorder={viewsApi.reorderViews}
+          onClose={() => setManageViewsOpen(false)}
         />
       ) : null}
     </DndContext>

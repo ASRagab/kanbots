@@ -55,6 +55,15 @@ interface WorkspaceConfigCommon {
    * HOUSE_RULES_MAX_BYTES to keep system-prompt overhead bounded.
    */
   houseRules?: string;
+  /**
+   * Command line invoked by the ACP (Agent Client Protocol) adapter when the
+   * user selects the `acp` provider. Stored as a raw shell-style string
+   * (e.g. `gemini --experimental-acp --yolo`) so users can supply multi-token
+   * commands without splitting them by hand. When unset, the dispatcher
+   * falls back to the `KANBOTS_ACP_COMMAND` env var, then to the documented
+   * default Gemini invocation. Capped at WORKSPACE_SCRIPT_MAX_BYTES.
+   */
+  acpCommand?: string;
 }
 
 export const HOUSE_RULES_MAX_BYTES = 8 * 1024;
@@ -187,6 +196,7 @@ function validateConfig(input: unknown): WorkspaceConfig | null {
   const scripts = validateScripts(obj.scripts);
   const notify = typeof obj.notifyOnRunComplete === 'boolean' ? obj.notifyOnRunComplete : undefined;
   const houseRules = validateHouseRules(obj.houseRules);
+  const acpCommand = validateAcpCommand(obj.acpCommand);
   if (obj.mode === 'github' && typeof obj.owner === 'string' && typeof obj.repo === 'string') {
     const cfg: GitHubWorkspaceConfig = { mode: 'github', owner: obj.owner, repo: obj.repo };
     if (defaults) cfg.defaults = defaults;
@@ -194,6 +204,7 @@ function validateConfig(input: unknown): WorkspaceConfig | null {
     if (scripts) cfg.scripts = scripts;
     if (notify !== undefined) cfg.notifyOnRunComplete = notify;
     if (houseRules !== undefined) cfg.houseRules = houseRules;
+    if (acpCommand !== undefined) cfg.acpCommand = acpCommand;
     return cfg;
   }
   if (obj.mode === 'local' && typeof obj.name === 'string' && typeof obj.authorLogin === 'string') {
@@ -203,9 +214,27 @@ function validateConfig(input: unknown): WorkspaceConfig | null {
     if (scripts) cfg.scripts = scripts;
     if (notify !== undefined) cfg.notifyOnRunComplete = notify;
     if (houseRules !== undefined) cfg.houseRules = houseRules;
+    if (acpCommand !== undefined) cfg.acpCommand = acpCommand;
     return cfg;
   }
   return null;
+}
+
+function validateAcpCommand(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'string') {
+    console.warn('[kanbots] ignoring invalid `acpCommand` field in .kanbots/config.json (expected string)');
+    return undefined;
+  }
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return undefined;
+  if (Buffer.byteLength(trimmed, 'utf8') > WORKSPACE_SCRIPT_MAX_BYTES) {
+    console.warn(
+      `[kanbots] ignoring \`acpCommand\` exceeding ${WORKSPACE_SCRIPT_MAX_BYTES} bytes`,
+    );
+    return undefined;
+  }
+  return trimmed;
 }
 
 function validateHouseRules(input: unknown): string | undefined {

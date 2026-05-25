@@ -42,6 +42,7 @@ export type {
   Label,
   OpenPRInput,
   PullRequest,
+  PullRequestReviewComment,
   Repo,
   UpdateIssuePatch,
   User,

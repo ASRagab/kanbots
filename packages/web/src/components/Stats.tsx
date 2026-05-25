@@ -19,6 +19,35 @@ interface StatsData {
   rollup: PersonaModelRollupRow[];
 }
 
+function providerShortLabel(provider: string): string {
+  switch (provider) {
+    case 'claude-code':
+      return 'Claude';
+    case 'codex-cli':
+      return 'Codex';
+    case 'gemini-cli':
+      return 'Gemini';
+    case 'amp-cli':
+      return 'Amp';
+    case 'cursor-cli':
+      return 'Cursor';
+    case 'copilot-cli':
+      return 'Copilot';
+    case 'opencode-cli':
+      return 'OpenCode';
+    case 'droid-cli':
+      return 'Droid';
+    case 'ccr-cli':
+      return 'CCR';
+    case 'qwen-cli':
+      return 'Qwen';
+    case 'acp':
+      return 'ACP';
+    default:
+      return provider;
+  }
+}
+
 export function Stats({ onClose }: StatsProps) {
   const [data, setData] = useState<StatsData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -289,15 +318,28 @@ function ProviderChip({ provider }: { provider: string }): React.ReactElement {
   const cls =
     provider === 'codex-cli'
       ? 'is-codex'
-      : provider === 'unknown' || provider === ''
-        ? 'is-unknown'
-        : '';
-  const label =
-    provider === 'claude-code'
-      ? 'Claude'
-      : provider === 'codex-cli'
-        ? 'Codex'
-        : provider || 'unknown';
+      : provider === 'gemini-cli'
+        ? 'is-gemini'
+        : provider === 'amp-cli'
+          ? 'is-amp'
+          : provider === 'cursor-cli'
+            ? 'is-cursor'
+            : provider === 'copilot-cli'
+              ? 'is-copilot'
+              : provider === 'opencode-cli'
+                ? 'is-opencode'
+                : provider === 'droid-cli'
+                  ? 'is-droid'
+                  : provider === 'ccr-cli'
+                    ? 'is-ccr'
+                    : provider === 'qwen-cli'
+                      ? 'is-qwen'
+                      : provider === 'acp'
+                        ? 'is-acp'
+                        : provider === 'unknown' || provider === ''
+                          ? 'is-unknown'
+                          : '';
+  const label = providerShortLabel(provider) || provider || 'unknown';
   return <span className={`kb-stats-provider-chip ${cls}`}>{label}</span>;
 }
 
@@ -329,7 +371,7 @@ function RollupTable({ rows }: { rows: PersonaModelRollupRow[] }): React.ReactEl
                 {r.model ?? '—'}
                 {r.provider ? (
                   <span style={{ marginLeft: 6, color: 'var(--ink-4)' }}>
-                    · {r.provider === 'codex-cli' ? 'Codex' : r.provider === 'claude-code' ? 'Claude' : r.provider}
+                    · {providerShortLabel(r.provider)}
                   </span>
                 ) : null}
               </td>

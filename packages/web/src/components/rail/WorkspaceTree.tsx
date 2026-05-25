@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { api } from '../../api.js';
 import { getBridge } from '../../desktop-bridge.js';
+import { useFocusedRepo } from '../../hooks/useFocusedRepo.js';
+import { useRepoStatus } from '../../hooks/useRepoStatus.js';
+import type { WorkspaceRepoPayload } from '../../types.js';
 import { FileChangeViewer } from '../modals/FileChangeViewer.js';
 
 /**
@@ -362,6 +366,240 @@ function TreeRow({
   );
 }
 
+function lastPathSegment(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '');
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return idx === -1 ? trimmed : trimmed.slice(idx + 1);
+}
+
+function repoLabel(repo: WorkspaceRepoPayload): string {
+  return repo.displayName ?? lastPathSegment(repo.repoPath);
+}
+
+interface RepoStatusBadgeProps {
+  repoId: number;
+  /** Bumped by the parent each time the dropdown re-opens so the
+   *  cached value is refreshed for the visible session. */
+  refreshKey: number;
+}
+
+/**
+ * Inline branch + ahead/behind + dirty indicator for a single repo row
+ * in the rail switcher dropdown. Lazy: only mounts when the menu is
+ * open, so closed dropdowns don't fan out git invocations. Degrades
+ * silently when the IPC fails (renders an empty span).
+ */
+function RepoStatusBadge({ repoId, refreshKey }: RepoStatusBadgeProps) {
+  const { status } = useRepoStatus(repoId, refreshKey);
+  if (status === null) {
+    return <span className="kb-repo-switcher-status" aria-hidden />;
+  }
+  const { branch, aheadCount, behindCount, dirtyCount } = status;
+  const parity = aheadCount === 0 && behindCount === 0;
+  const label = `${branch ?? 'unknown'}${
+    aheadCount > 0 ? ` ahead ${aheadCount}` : ''
+  }${behindCount > 0 ? ` behind ${behindCount}` : ''}${
+    dirtyCount > 0 ? ` · ${dirtyCount} change${dirtyCount === 1 ? '' : 's'}` : ''
+  }`;
+  return (
+    <span className="kb-repo-switcher-status" aria-label={label}>
+      <span className="kb-repo-switcher-status-branch">{branch ?? '—'}</span>
+      <span className="kb-repo-switcher-status-sep" aria-hidden>
+        ·
+      </span>
+      {parity ? (
+        <span className="kb-repo-switcher-status-parity" aria-hidden>
+          ↑0
+        </span>
+      ) : (
+        <>
+          {aheadCount > 0 ? (
+            <span className="kb-repo-switcher-ahead" aria-hidden>
+              ↑{aheadCount}
+            </span>
+          ) : null}
+          {behindCount > 0 ? (
+            <span className="kb-repo-switcher-behind" aria-hidden>
+              ↓{behindCount}
+            </span>
+          ) : null}
+        </>
+      )}
+      {dirtyCount > 0 ? (
+        <span
+          className="kb-repo-switcher-dirty-dot"
+          aria-label={`${dirtyCount} uncommitted change${dirtyCount === 1 ? '' : 's'}`}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+interface RepoSwitcherProps {
+  repos: WorkspaceRepoPayload[];
+  focused: WorkspaceRepoPayload | null;
+  onPick: (id: number | null) => void;
+}
+
+/**
+ * Compact repo switcher rendered above the tree toolbar. With one repo (or
+ * zero) it's a plain inline label — no chrome, no chevron. With two or more
+ * it becomes a dropdown that lists each repo by display name + target
+ * branch and persists the choice via `useFocusedRepo` (which the parent
+ * controls).
+ */
+function RepoSwitcher({ repos, focused, onPick }: RepoSwitcherProps) {
+  const [open, setOpen] = useState(false);
+  // Bumped each time the user re-opens the dropdown so RepoStatusBadge
+  // re-queries through useRepoStatus (which respects the 30s cache but
+  // honors a freshness bump from this key).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent): void {
+      if (!wrapRef.current) return;
+      if (e.target instanceof Node && wrapRef.current.contains(e.target)) return;
+      setOpen(false);
+    }
+    function onKey(e: globalThis.KeyboardEvent): void {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const handleOpenInIde = useCallback(
+    async (
+      e: React.MouseEvent<HTMLButtonElement>,
+      repoId: number,
+    ): Promise<void> => {
+      // Stop the menu item click handler from firing — Open-in-IDE is
+      // an inline secondary action and shouldn't switch focus to the row.
+      e.stopPropagation();
+      try {
+        await api.openWorkspaceRepoInIde(repoId);
+      } catch {
+        // IPC errors surface in the main process logs; the rail row
+        // intentionally stays quiet so a missing editor doesn't shout
+        // at the user every time they hover the dropdown.
+      }
+    },
+    [],
+  );
+
+  if (repos.length === 0) return null;
+
+  const labelText = focused ? repoLabel(focused) : repos[0] ? repoLabel(repos[0]) : '';
+  const branchText = focused?.targetBranch ?? null;
+
+  if (repos.length === 1) {
+    return (
+      <div className="kb-repo-switcher is-single" role="status">
+        <span className="kb-repo-switcher-name">{labelText}</span>
+        {branchText ? (
+          <span className="kb-repo-switcher-branch" aria-label="target branch">
+            {branchText}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="kb-repo-switcher" ref={wrapRef}>
+      <button
+        type="button"
+        className="kb-repo-switcher-button"
+        onClick={() => {
+          setOpen((v) => {
+            const next = !v;
+            // Re-opening should give the user a fresh look at the
+            // per-repo status, so bump the refresh key whenever we
+            // transition closed → open.
+            if (next) setRefreshKey((k) => k + 1);
+            return next;
+          });
+        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Pick which repo to view and dispatch into"
+      >
+        <span className="kb-repo-switcher-name">{labelText}</span>
+        {branchText ? (
+          <span className="kb-repo-switcher-branch" aria-label="target branch">
+            {branchText}
+          </span>
+        ) : null}
+        <span className="kb-repo-switcher-caret" aria-hidden>
+          ▾
+        </span>
+      </button>
+      {open ? (
+        <div className="kb-repo-switcher-menu" role="menu">
+          {repos.map((repo) => {
+            const active = focused?.id === repo.id;
+            return (
+              <div
+                key={repo.id}
+                className={`kb-repo-switcher-item${active ? ' is-active' : ''}`}
+                role="menuitem"
+                aria-current={active ? 'true' : undefined}
+              >
+                <button
+                  type="button"
+                  className="kb-repo-switcher-item-main"
+                  onClick={() => {
+                    onPick(repo.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="kb-repo-switcher-item-name">
+                    {repoLabel(repo)}
+                    {repo.isPrimary ? (
+                      <span className="kb-repo-switcher-primary" aria-label="primary repo">
+                        primary
+                      </span>
+                    ) : null}
+                  </span>
+                  <RepoStatusBadge repoId={repo.id} refreshKey={refreshKey} />
+                </button>
+                <button
+                  type="button"
+                  className="kb-repo-switcher-ide-btn"
+                  onClick={(e) => void handleOpenInIde(e, repo.id)}
+                  title="Open this repo in your IDE"
+                  aria-label={`Open ${repoLabel(repo)} in IDE`}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export interface WorkspaceTreeProps {
   /** Friendly name shown above the tree (e.g. project name + branch). */
   header?: { name: string; subtitle?: string };
@@ -373,6 +611,8 @@ export interface WorkspaceTreeProps {
 }
 
 export function WorkspaceTree({ header, onSelectIssue }: WorkspaceTreeProps) {
+  const { repos, focused, setFocusedRepoId } = useFocusedRepo();
+  const focusedRepoPath = focused?.repoPath ?? null;
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [worktreeStatus, setWorktreeStatus] = useState<WorktreeStatus>({
     files: {},
@@ -395,9 +635,21 @@ export function WorkspaceTree({ header, onSelectIssue }: WorkspaceTreeProps) {
 
   // 1. Resolve the active repo root once, plus a periodic re-check so
   //    closing a workspace clears the tree without a renderer reload.
+  //    When the user has a focused workspace repo, that repo's path wins
+  //    over the host-level `workspaceCurrentRoot()` (which still always
+  //    reflects the workspace's primary repo). Falls back to the bridge
+  //    call when no repos are registered (pre-multi-repo workspaces).
   useEffect(() => {
     const bridge = getBridge();
     if (!bridge) return;
+    if (focusedRepoPath !== null) {
+      setRootPath((prev) => {
+        if (prev === focusedRepoPath) return prev;
+        dispatch({ kind: 'reset' });
+        return focusedRepoPath;
+      });
+      return;
+    }
     let cancelled = false;
     async function refresh(): Promise<void> {
       try {
@@ -418,7 +670,7 @@ export function WorkspaceTree({ header, onSelectIssue }: WorkspaceTreeProps) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, []);
+  }, [focusedRepoPath]);
 
   // 2. Load the root listing.
   useEffect(() => {
@@ -547,6 +799,11 @@ export function WorkspaceTree({ header, onSelectIssue }: WorkspaceTreeProps) {
           ) : null}
         </button>
       ) : null}
+      <RepoSwitcher
+        repos={repos}
+        focused={focused}
+        onPick={(id) => setFocusedRepoId(id)}
+      />
       <div className="kb-tree-toolbar">
         <input
           type="search"

@@ -13,18 +13,24 @@ import type {
   AutopilotKind,
   AutopilotSession,
   Card,
+  CardTemplatePayload,
   ChatConversation,
   ChatPayload,
   ChatPostMessageResult,
+  ChatSessionPayload,
   Comment,
   Config,
   CreateIssueInput,
   DiffPayload,
   DraftedIssue,
+  DraftedPrDescription,
   Issue,
   IssueDetail,
+  IssueRelationPayload,
   Message,
   PendingDecisionPayload,
+  PrCommentPayload,
+  PrCommentsListResult,
   PreviewStatePayload,
   ProviderId,
   ProviderSaveInput,
@@ -45,15 +51,22 @@ import type {
   StatusKey,
   UpdateIssuePatch,
   Workspace,
+  WorkspaceAcpCommandBridgePayload,
   WorkspaceBudgets,
   WorkspaceFolderPayload,
   WorkspaceHouseRules,
+  WorkspaceRepoPayload,
+  WorkspaceRepoStatus,
   WorkspaceScriptsBridgePayload,
   WorkspaceRunScriptResult,
 } from './types.js';
 
 export type { PostMessageResult, UploadAttachmentResult } from './global.js';
-export type { ReviewCommentPayload } from './types.js';
+export type {
+  PrCommentPayload,
+  PrCommentsListResult,
+  ReviewCommentPayload,
+} from './types.js';
 
 export interface ResolveCardResult {
   card: Card;
@@ -70,6 +83,13 @@ export interface PostMessageOptions {
   model?: string;
   provider?: ProviderId;
   appendSystemPrompt?: string;
+  /** Workspace repo to base the dispatched run's worktree on. Only used when
+   *  the post triggers a new run. Omit to use the workspace's primary repo. */
+  repoId?: number;
+  /** Issue-thread chat session the message is posted into — tags both
+   *  the message row and any dispatched agent run with this session id
+   *  so the TaskDetailModal dropdown can filter the transcript. */
+  chatSessionId?: number;
 }
 
 export interface DispatchIssueResult {
@@ -81,6 +101,9 @@ export interface DispatchIssueInput {
   fromStatus: StatusKey | null;
   model?: string;
   provider?: ProviderId;
+  /** Workspace repo to base the run's worktree on. Omit to use the
+   *  workspace's primary repo. */
+  repoId?: number;
 }
 
 interface BridgeError extends Error {
@@ -176,6 +199,8 @@ function buildPostMessageArgs(
   if (opts.appendSystemPrompt !== undefined) {
     args.appendSystemPrompt = opts.appendSystemPrompt;
   }
+  if (opts.repoId !== undefined) args.repoId = opts.repoId;
+  if (opts.chatSessionId !== undefined) args.chatSessionId = opts.chatSessionId;
   return args;
 }
 
@@ -189,6 +214,7 @@ function buildDispatchArgs(
   };
   if (input.model !== undefined) args.model = input.model;
   if (input.provider !== undefined) args.provider = input.provider;
+  if (input.repoId !== undefined) args.repoId = input.repoId;
   return args;
 }
 
@@ -261,6 +287,7 @@ export const api = {
         agentRunId: null,
         promotedGithubCommentId: null,
         promotedAt: null,
+        chatSessionId: null,
       }));
       const thread = {
         id: 1,
@@ -400,6 +427,9 @@ export const api = {
       appendSystemPrompt?: string;
       model?: string;
       provider?: ProviderId;
+      /** Workspace repo to base the run's worktree on. Local-mode only;
+       *  ignored in cloud mode. Omit to use the workspace's primary repo. */
+      repoId?: number;
     },
   ): Promise<AgentRun> => {
     if (cloudCtx !== null) {
@@ -439,6 +469,7 @@ export const api = {
     }
     if (input.model !== undefined) args.model = input.model;
     if (input.provider !== undefined) args.provider = input.provider;
+    if (input.repoId !== undefined) args.repoId = input.repoId;
     return invoke('issues:start-agent', args);
   },
   dispatchIssue: async (
@@ -537,6 +568,12 @@ export const api = {
   }): Promise<WorkspaceScriptsBridgePayload> => invoke('workspace:set-scripts', input),
   runWorkspaceScript: (kind: 'setup' | 'cleanup'): Promise<WorkspaceRunScriptResult> =>
     invoke('workspace:run-script', { kind }),
+  getWorkspaceAcpCommand: (): Promise<WorkspaceAcpCommandBridgePayload> =>
+    invoke('workspace:get-acp-command', undefined),
+  setWorkspaceAcpCommand: (input: {
+    acpCommand: string | null;
+  }): Promise<WorkspaceAcpCommandBridgePayload> =>
+    invoke('workspace:set-acp-command', input),
   getReviewComments: (
     runId: number,
     includeConsumed?: boolean,
@@ -561,6 +598,31 @@ export const api = {
     invoke('review-comments:remove', { id }),
   consumeReviewComments: (runId: number): Promise<ReviewCommentPayload[]> =>
     invoke('review-comments:consume-pending', { runId }),
+  /**
+   * Fetch PR review + conversation comments for the PR linked to an
+   * issue. Returns an empty result when no PR is linked, when the
+   * workspace is in local mode, or when the cloud bridge is active —
+   * the renderer hides the section in all of these.
+   */
+  listPrComments: (issueNumber: number): Promise<PrCommentsListResult> => {
+    if (cloudCtx !== null) {
+      return Promise.resolve({
+        linkedPullNumber: null,
+        linkedPullHtmlUrl: null,
+        comments: [],
+      });
+    }
+    return invoke('pr-comments:list', { issueNumber });
+  },
+  /**
+   * Post a reply on the PR's conversation thread (top-level comment).
+   * V1 doesn't surface inline-reply targeting — the reply always goes
+   * to the PR's main thread on GitHub.
+   */
+  replyToPrComment: (
+    issueNumber: number,
+    body: string,
+  ): Promise<PrCommentPayload> => invoke('pr-comments:reply', { issueNumber, body }),
   listFolders: (): Promise<WorkspaceFolderPayload[]> => {
     if (cloudCtx !== null) return Promise.resolve([]);
     return invoke('folders:list', undefined);
@@ -573,6 +635,54 @@ export const api = {
     const args: ChannelArgs<'folders:add'> = { name: input.name, path: input.path };
     if (input.defaultBranch !== undefined) args.defaultBranch = input.defaultBranch;
     return invoke('folders:add', args);
+  },
+  listWorkspaceRepos: (): Promise<WorkspaceRepoPayload[]> => {
+    if (cloudCtx !== null) return Promise.resolve([]);
+    return invoke('workspace:repos-list', undefined);
+  },
+  addWorkspaceRepo: (input: {
+    repoPath: string;
+    displayName?: string;
+    targetBranch?: string;
+  }): Promise<WorkspaceRepoPayload> => {
+    const args: ChannelArgs<'workspace:repos-add'> = { repoPath: input.repoPath };
+    if (input.displayName !== undefined) args.displayName = input.displayName;
+    if (input.targetBranch !== undefined) args.targetBranch = input.targetBranch;
+    return invoke('workspace:repos-add', args);
+  },
+  removeWorkspaceRepo: (id: number): Promise<{ ok: boolean }> =>
+    invoke('workspace:repos-remove', { id }),
+  setWorkspaceRepoPrimary: (id: number): Promise<WorkspaceRepoPayload[]> =>
+    invoke('workspace:repos-set-primary', { id }),
+  setWorkspaceRepoTargetBranch: (
+    id: number,
+    targetBranch: string | null,
+  ): Promise<WorkspaceRepoPayload> =>
+    invoke('workspace:repos-set-target-branch', { id, targetBranch }),
+  setWorkspaceRepoDisplayName: (
+    id: number,
+    displayName: string | null,
+  ): Promise<WorkspaceRepoPayload> =>
+    invoke('workspace:repos-set-display-name', { id, displayName }),
+  /**
+   * Per-repo branch + ahead/behind + dirty count snapshot for the rail
+   * switcher. Shells out three concurrent git invocations on the main
+   * process; tolerant of failure (returns zeros and a null branch).
+   */
+  getWorkspaceRepoStatus: (repoId: number): Promise<WorkspaceRepoStatus> =>
+    invoke('workspace:repo-status', { repoId }),
+  /**
+   * Launch the configured IDE pointed at a workspace repo. Defaults to
+   * the system IDE chain (VSCode → Cursor → file manager); pass `ide`
+   * to force one specific target.
+   */
+  openWorkspaceRepoInIde: (
+    repoId: number,
+    ide?: 'vscode' | 'cursor' | 'system',
+  ): Promise<{ ok: boolean; ide: 'vscode' | 'cursor' | 'system' | null; error?: string }> => {
+    const args: ChannelArgs<'workspace:open-repo-in-ide'> = { repoId };
+    if (ide !== undefined) args.ide = ide;
+    return invoke('workspace:open-repo-in-ide', args);
   },
   getAgentRunChecks: (runId: number): Promise<AgentCheck[]> =>
     invoke('agent-runs:checks:list', { runId }),
@@ -677,21 +787,23 @@ export const api = {
   splitIssue: (
     issueNumber: number,
     subtasks: Array<{ title: string; body?: string }>,
-    opts: { dispatch?: boolean } = {},
+    opts: { dispatch?: boolean; repoId?: number } = {},
   ): Promise<{ parent: number; children: Issue[] }> =>
     invoke('issues:split', {
       number: issueNumber,
       subtasks,
       dispatch: opts.dispatch ?? false,
+      ...(opts.repoId !== undefined ? { repoId: opts.repoId } : {}),
     }),
   spawnReviewer: (
     issueNumber: number,
-    opts: { threadId?: number; prompt?: string; model?: string } = {},
+    opts: { threadId?: number; prompt?: string; model?: string; repoId?: number } = {},
   ): Promise<AgentRun> => {
     const args: ChannelArgs<'issues:reviewer'> = { number: issueNumber };
     if (opts.threadId !== undefined) args.threadId = opts.threadId;
     if (opts.prompt !== undefined) args.prompt = opts.prompt;
     if (opts.model !== undefined) args.model = opts.model;
+    if (opts.repoId !== undefined) args.repoId = opts.repoId;
     return invoke('issues:reviewer', args);
   },
   forkAgentRun: (
@@ -704,8 +816,21 @@ export const api = {
     invoke('agent-runs:promote-commit', { runId }),
   promotePR: (
     runId: number,
-  ): Promise<ChannelResult<'agent-runs:promote-pr'>> =>
-    invoke('agent-runs:promote-pr', { runId }),
+    opts: { title?: string; body?: string } = {},
+  ): Promise<ChannelResult<'agent-runs:promote-pr'>> => {
+    const args: ChannelArgs<'agent-runs:promote-pr'> = { runId };
+    if (opts.title !== undefined) args.title = opts.title;
+    if (opts.body !== undefined) args.body = opts.body;
+    return invoke('agent-runs:promote-pr', args);
+  },
+  /**
+   * Pre-fills an AI-generated PR title + body from the run's diff. Used
+   * before opening the actual PR — the renderer surfaces both fields in
+   * the create-PR modal so the user can edit before submitting. The
+   * separate `promotePR(...)` call is what actually opens the PR.
+   */
+  draftPrDescription: (runId: number): Promise<DraftedPrDescription> =>
+    invoke('agent-runs:draft-pr-description', { runId }),
   costToday: async (): Promise<{ totalUsd: number; since: string }> => {
     if (cloudCtx !== null) {
       const bridge = getCloudBridge();
@@ -728,10 +853,59 @@ export const api = {
   costTimeSeries: (
     args: ChannelArgs<'analytics:time-series'>,
   ): Promise<ChannelResult<'analytics:time-series'>> => invoke('analytics:time-series', args),
+  listRecentActivity: (
+    args: ChannelArgs<'analytics:recent-activity'> = {},
+  ): Promise<ChannelResult<'analytics:recent-activity'>> =>
+    invoke('analytics:recent-activity', args),
   resolveCard: (cardId: number, value: string): Promise<ResolveCardResult> =>
     invoke('cards:resolve', { cardId, value }),
   dismissCard: (cardId: number): Promise<DismissCardResult> =>
     invoke('cards:dismiss', { cardId }),
+  listCardTemplates: (): Promise<CardTemplatePayload[]> => {
+    // Card templates are workspace-scoped local-store rows. Cloud
+    // workspaces don't host a kanbots store today, so the list is
+    // empty until a cloud-side endpoint is added.
+    if (cloudCtx !== null) return Promise.resolve([]);
+    return invoke('card-templates:list', undefined);
+  },
+  createCardTemplate: (input: {
+    name: string;
+    titleTemplate: string;
+    bodyTemplate?: string | null;
+    labels?: string[];
+    defaultProvider?: ProviderId | null;
+  }): Promise<CardTemplatePayload> => {
+    const args: ChannelArgs<'card-templates:create'> = {
+      name: input.name,
+      titleTemplate: input.titleTemplate,
+    };
+    if (input.bodyTemplate !== undefined) args.bodyTemplate = input.bodyTemplate;
+    if (input.labels !== undefined) args.labels = input.labels;
+    if (input.defaultProvider !== undefined) args.defaultProvider = input.defaultProvider;
+    return invoke('card-templates:create', args);
+  },
+  updateCardTemplate: (input: {
+    id: number;
+    name?: string;
+    titleTemplate?: string;
+    bodyTemplate?: string | null;
+    labels?: string[];
+    defaultProvider?: ProviderId | null;
+  }): Promise<CardTemplatePayload> => {
+    const args: ChannelArgs<'card-templates:update'> = { id: input.id };
+    if (input.name !== undefined) args.name = input.name;
+    if (input.titleTemplate !== undefined) args.titleTemplate = input.titleTemplate;
+    if (input.bodyTemplate !== undefined) args.bodyTemplate = input.bodyTemplate;
+    if (input.labels !== undefined) args.labels = input.labels;
+    if (input.defaultProvider !== undefined) args.defaultProvider = input.defaultProvider;
+    return invoke('card-templates:update', args);
+  },
+  deleteCardTemplate: (id: number): Promise<{ ok: boolean }> =>
+    invoke('card-templates:delete', { id }),
+  reorderCardTemplates: (ids: number[]): Promise<CardTemplatePayload[]> =>
+    invoke('card-templates:reorder', { ids }),
+  instantiateCardTemplate: (id: number): Promise<Issue> =>
+    invoke('card-templates:instantiate', { id }),
   uploadAttachment: async (file: Blob): Promise<UploadAttachmentResult> => {
     const data = new Uint8Array(await file.arrayBuffer());
     return invoke('attachments:upload', {
@@ -801,7 +975,7 @@ export const api = {
   postChatMessage: (
     conversationId: number,
     body: string,
-    opts: PostMessageOptions = {},
+    opts: PostMessageOptions & { sessionId?: number } = {},
   ): Promise<ChatPostMessageResult> => {
     const args: ChannelArgs<'chat:post-message'> = { conversationId, body };
     if (opts.dispatch !== undefined) args.dispatch = opts.dispatch;
@@ -810,7 +984,88 @@ export const api = {
     if (opts.appendSystemPrompt !== undefined) {
       args.appendSystemPrompt = opts.appendSystemPrompt;
     }
+    if (opts.sessionId !== undefined) args.sessionId = opts.sessionId;
     return invoke('chat:post-message', args);
   },
   stopChatRun: (runId: number): Promise<AgentRun> => invoke('chat:stop-run', { runId }),
+  listChatSessions: (conversationId: number): Promise<ChatSessionPayload[]> =>
+    invoke('chat:sessions:list', { conversationId }),
+  createChatSession: (input: {
+    conversationId: number;
+    agentProvider: ProviderId;
+    agentModel?: string;
+    title?: string;
+  }): Promise<ChatSessionPayload> => {
+    const args: ChannelArgs<'chat:sessions:create'> = {
+      conversationId: input.conversationId,
+      agentProvider: input.agentProvider,
+    };
+    if (input.agentModel !== undefined) args.agentModel = input.agentModel;
+    if (input.title !== undefined) args.title = input.title;
+    return invoke('chat:sessions:create', args);
+  },
+  renameChatSession: (id: number, title: string | null): Promise<ChatSessionPayload> =>
+    invoke('chat:sessions:rename', { id, title }),
+  deleteChatSession: (id: number): Promise<{ ok: boolean }> =>
+    invoke('chat:sessions:delete', { id }),
+  setActiveChatSession: (
+    conversationId: number,
+    sessionId: number,
+  ): Promise<{ ok: boolean }> =>
+    invoke('chat:sessions:set-active', { conversationId, sessionId }),
+  // Issue-thread session methods. Same shape as the conversation
+  // variants, but keyed on threads.id. Used by TaskDetailModal's
+  // ReplyFooter to drive its session dropdown.
+  listThreadChatSessions: (threadId: number): Promise<ChatSessionPayload[]> =>
+    invoke('chat:thread-sessions:list', { threadId }),
+  createThreadChatSession: (input: {
+    threadId: number;
+    agentProvider: ProviderId;
+    agentModel?: string;
+    title?: string;
+  }): Promise<ChatSessionPayload> => {
+    const args: ChannelArgs<'chat:thread-sessions:create'> = {
+      threadId: input.threadId,
+      agentProvider: input.agentProvider,
+    };
+    if (input.agentModel !== undefined) args.agentModel = input.agentModel;
+    if (input.title !== undefined) args.title = input.title;
+    return invoke('chat:thread-sessions:create', args);
+  },
+  renameThreadChatSession: (
+    id: number,
+    title: string | null,
+  ): Promise<ChatSessionPayload> =>
+    invoke('chat:thread-sessions:rename', { id, title }),
+  deleteThreadChatSession: (id: number): Promise<{ ok: boolean }> =>
+    invoke('chat:thread-sessions:delete', { id }),
+  /**
+   * Sub-issue relations — small overlay table that records parent ↔
+   * child links on top of the existing issue surface. Cloud workspaces
+   * don't host the local store today, so all four helpers degrade to
+   * empty/no-op until a cloud-side endpoint is added.
+   */
+  listIssueChildren: (parentNumber: number): Promise<IssueRelationPayload[]> => {
+    if (cloudCtx !== null) return Promise.resolve([]);
+    return invoke('issue-relations:list-children', { parentNumber });
+  },
+  listIssueParents: (childNumber: number): Promise<IssueRelationPayload[]> => {
+    if (cloudCtx !== null) return Promise.resolve([]);
+    return invoke('issue-relations:list-parents', { childNumber });
+  },
+  addIssueRelation: (input: {
+    parentNumber: number;
+    childNumber: number;
+  }): Promise<IssueRelationPayload> => {
+    if (cloudCtx !== null) {
+      refuseInCloud('api.addIssueRelation');
+    }
+    return invoke('issue-relations:add', input);
+  },
+  removeIssueRelation: (id: number): Promise<{ ok: boolean }> => {
+    if (cloudCtx !== null) {
+      refuseInCloud('api.removeIssueRelation');
+    }
+    return invoke('issue-relations:remove', { id });
+  },
 } as const;

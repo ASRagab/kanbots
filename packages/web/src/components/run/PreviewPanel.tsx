@@ -1,5 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api.js';
+
+export interface PreviewInspectSelection {
+  tagName: string;
+  id: string | null;
+  className: string | null;
+  textPreview: string;
+  selector: string;
+  reactComponent?: string;
+  filePath?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+}
 
 export interface PreviewPanelProps {
   activeRunId?: number;
@@ -7,6 +19,12 @@ export interface PreviewPanelProps {
   worktreePath?: string | null;
   /** When `compact`, the preview canvas is shorter — use inside a tab pane. */
   size?: 'compact' | 'tall';
+  /**
+   * Called when the user finishes a click-to-component inspect interaction
+   * in the preview iframe. Wiring this into the chat composer is downstream;
+   * for now the panel just hands the selection back.
+   */
+  onInspectSelect?: (selection: PreviewInspectSelection) => void;
 }
 
 type DeviceMode = 'desktop' | 'mobile' | 'responsive';
@@ -19,9 +37,11 @@ export function PreviewPanel({
   branch,
   worktreePath,
   size = 'compact',
+  onInspectSelect,
 }: PreviewPanelProps) {
   const [state, setState] = useState<{
     url: string | null;
+    upstreamUrl: string | null;
     state: 'idle' | 'booting' | 'live' | 'crashed' | 'stopped';
   } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -35,6 +55,9 @@ export function PreviewPanel({
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
   const [copyOk, setCopyOk] = useState(false);
+  const [devtoolsOpen, setDevtoolsOpen] = useState(false);
+  const [inspectOn, setInspectOn] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
     if (!activeRunId) {
@@ -45,7 +68,13 @@ export function PreviewPanel({
     api
       .getAgentRunPreview(activeRunId)
       .then((p) => {
-        if (!cancelled) setState({ url: p.url, state: p.state });
+        if (!cancelled) {
+          setState({
+            url: p.url,
+            upstreamUrl: p.upstreamUrl ?? p.url,
+            state: p.state,
+          });
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -59,7 +88,11 @@ export function PreviewPanel({
     setError(null);
     try {
       const p = await api.startAgentRunPreview(activeRunId);
-      setState({ url: p.url, state: p.state });
+      setState({
+        url: p.url,
+        upstreamUrl: p.upstreamUrl ?? p.url,
+        state: p.state,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -72,7 +105,13 @@ export function PreviewPanel({
     setBusy(true);
     try {
       const p = await api.stopAgentRunPreview(activeRunId);
-      setState({ url: p.url, state: p.state });
+      setState({
+        url: p.url,
+        upstreamUrl: p.upstreamUrl ?? p.url,
+        state: p.state,
+      });
+      setDevtoolsOpen(false);
+      setInspectOn(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -81,6 +120,7 @@ export function PreviewPanel({
   }
 
   const url = state?.url ?? null;
+  const upstreamUrl = state?.upstreamUrl ?? url;
   const isLive = state?.state === 'live' && url;
   const canvasHeight = size === 'tall' ? 360 : 280;
 
@@ -95,6 +135,59 @@ export function PreviewPanel({
     setDraftUrl(url);
     setLoadedUrl(url);
   }, [url]);
+
+  // Reset toggle states whenever the iframe is reloaded (key bump) or the
+  // run changes — the injected script's state doesn't survive navigation.
+  useEffect(() => {
+    setDevtoolsOpen(false);
+    setInspectOn(false);
+  }, [iframeKey, activeRunId]);
+
+  // Listen for selections posted from the inspect.js running inside the
+  // iframe. The inspector auto-disables after a click, so flip the local
+  // toggle off and hand the payload to the parent.
+  useEffect(() => {
+    function onMessage(event: MessageEvent): void {
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      const { source, type, payload } = data as {
+        source?: string;
+        type?: string;
+        payload?: unknown;
+      };
+      if (source !== 'kb-inspect') return;
+      if (type === 'selected' && payload && typeof payload === 'object') {
+        setInspectOn(false);
+        onInspectSelect?.(payload as PreviewInspectSelection);
+      } else if (type === 'cancelled') {
+        setInspectOn(false);
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onInspectSelect]);
+
+  function postToFrame(source: 'kb-eruda' | 'kb-inspect', type: string): void {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage({ source, type }, '*');
+    } catch {
+      // ignore — iframe may not be loaded yet.
+    }
+  }
+
+  function toggleDevtools(): void {
+    const next = !devtoolsOpen;
+    setDevtoolsOpen(next);
+    postToFrame('kb-eruda', next ? 'show' : 'hide');
+  }
+
+  function toggleInspect(): void {
+    const next = !inspectOn;
+    setInspectOn(next);
+    postToFrame('kb-inspect', next ? 'enable' : 'disable');
+  }
 
   function submitUrl(): void {
     if (draftUrl.trim() === '') return;
@@ -113,6 +206,13 @@ export function PreviewPanel({
     } catch {
       // ignore — clipboard may be unavailable in restricted contexts.
     }
+  }
+
+  function openExternal(): void {
+    // Prefer the upstream dev-server URL so the external browser gets real
+    // devtools instead of our in-iframe injection.
+    const target = upstreamUrl ?? loadedUrl;
+    if (target) window.open(target, '_blank');
   }
 
   return (
@@ -182,8 +282,8 @@ export function PreviewPanel({
             <button
               type="button"
               className="pf-url-action"
-              onClick={() => loadedUrl && window.open(loadedUrl, '_blank')}
-              title="Open in external browser"
+              onClick={openExternal}
+              title="Open the raw dev-server URL in a new browser tab"
               aria-label="Open in external browser"
             >
               <span aria-hidden>↗</span>
@@ -225,6 +325,64 @@ export function PreviewPanel({
             </button>
           </div>
         ) : null}
+        {isLive ? (
+          <>
+            <button
+              type="button"
+              className={`pf-tool${devtoolsOpen ? ' is-active' : ''}`}
+              aria-pressed={devtoolsOpen}
+              onClick={toggleDevtools}
+              title={devtoolsOpen ? 'Hide devtools panel' : 'Show devtools panel'}
+              aria-label="Toggle devtools panel"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+                <path d="M4 6.5l2 1.5-2 1.5" />
+                <path d="M8 10h4" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`pf-tool${inspectOn ? ' is-active' : ''}`}
+              aria-pressed={inspectOn}
+              onClick={toggleInspect}
+              title={
+                inspectOn
+                  ? 'Cancel inspect — click an element in the preview to capture it'
+                  : 'Inspect — click any element in the preview to capture its context'
+              }
+              aria-label="Toggle inspect mode"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <circle cx="8" cy="8" r="5" />
+                <path d="M8 1.5v3" />
+                <path d="M8 11.5v3" />
+                <path d="M1.5 8h3" />
+                <path d="M11.5 8h3" />
+              </svg>
+            </button>
+          </>
+        ) : null}
         <span style={{ color: state?.state === 'live' ? 'var(--review)' : 'var(--ink-3)' }}>
           {state?.state ?? 'idle'}
         </span>
@@ -238,6 +396,7 @@ export function PreviewPanel({
             <div className="pf-mobile-shell" aria-label="Mobile device frame">
               <iframe
                 key={iframeKey}
+                ref={iframeRef}
                 src={loadedUrl ?? undefined}
                 title="Branch preview"
                 sandbox="allow-scripts allow-same-origin allow-forms"
@@ -254,6 +413,7 @@ export function PreviewPanel({
             <div className="pf-responsive-shell">
               <iframe
                 key={iframeKey}
+                ref={iframeRef}
                 src={loadedUrl ?? undefined}
                 title="Branch preview"
                 sandbox="allow-scripts allow-same-origin allow-forms"
@@ -262,7 +422,9 @@ export function PreviewPanel({
             </div>
           ) : (
             <iframe
-              src={url ?? undefined}
+              key={iframeKey}
+              ref={iframeRef}
+              src={loadedUrl ?? undefined}
               title="Branch preview"
               sandbox="allow-scripts allow-same-origin allow-forms"
               style={{ width: '100%', height: '100%', border: 'none', background: 'white' }}
@@ -330,11 +492,7 @@ export function PreviewPanel({
           >
             Stop preview
           </button>
-          <button
-            type="button"
-            className="kb-btn ghost"
-            onClick={() => url && window.open(url, '_blank')}
-          >
+          <button type="button" className="kb-btn ghost" onClick={openExternal}>
             Open in browser ↗
           </button>
         </div>

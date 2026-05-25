@@ -55,6 +55,30 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
     | 'codexAuthStatus'
     | 'codexLoginStart'
     | 'codexLoginCancel'
+    | 'geminiAuthStatus'
+    | 'geminiLoginStart'
+    | 'geminiLoginCancel'
+    | 'ampAuthStatus'
+    | 'ampLoginStart'
+    | 'ampLoginCancel'
+    | 'cursorAuthStatus'
+    | 'cursorLoginStart'
+    | 'cursorLoginCancel'
+    | 'copilotAuthStatus'
+    | 'copilotLoginStart'
+    | 'copilotLoginCancel'
+    | 'opencodeAuthStatus'
+    | 'opencodeLoginStart'
+    | 'opencodeLoginCancel'
+    | 'droidAuthStatus'
+    | 'droidLoginStart'
+    | 'droidLoginCancel'
+    | 'ccrAuthStatus'
+    | 'ccrLoginStart'
+    | 'ccrLoginCancel'
+    | 'qwenAuthStatus'
+    | 'qwenLoginStart'
+    | 'qwenLoginCancel'
     | 'cloudAuthStatus'
     | 'cloudLoginStart'
     | 'cloudLoginPoll'
@@ -108,6 +132,14 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
         cloudRecents: [],
         claudeAuthed: true,
         codexAuthed: true,
+        geminiAuthed: true,
+        ampAuthed: true,
+        cursorAuthed: true,
+        copilotAuthed: true,
+        opencodeAuthed: true,
+        droidAuthed: true,
+        ccrAuthed: true,
+        qwenAuthed: true,
         cloudAuthed: false,
         cloudPromptDismissed: true,
       }),
@@ -124,6 +156,30 @@ export function installFakeBridge(opts: InstallOptions = {}): FakeBridge {
     codexAuthStatus: () => Promise.resolve({ authed: true }),
     codexLoginStart: () => Promise.resolve({ ok: true }),
     codexLoginCancel: () => Promise.resolve(),
+    geminiAuthStatus: () => Promise.resolve({ authed: true }),
+    geminiLoginStart: () => Promise.resolve({ ok: true }),
+    geminiLoginCancel: () => Promise.resolve(),
+    ampAuthStatus: () => Promise.resolve({ authed: true }),
+    ampLoginStart: () => Promise.resolve({ ok: true }),
+    ampLoginCancel: () => Promise.resolve(),
+    cursorAuthStatus: () => Promise.resolve({ authed: true }),
+    cursorLoginStart: () => Promise.resolve({ ok: true }),
+    cursorLoginCancel: () => Promise.resolve(),
+    copilotAuthStatus: () => Promise.resolve({ authed: true }),
+    copilotLoginStart: () => Promise.resolve({ ok: true }),
+    copilotLoginCancel: () => Promise.resolve(),
+    opencodeAuthStatus: () => Promise.resolve({ authed: true }),
+    opencodeLoginStart: () => Promise.resolve({ ok: true }),
+    opencodeLoginCancel: () => Promise.resolve(),
+    droidAuthStatus: () => Promise.resolve({ authed: true }),
+    droidLoginStart: () => Promise.resolve({ ok: true }),
+    droidLoginCancel: () => Promise.resolve(),
+    ccrAuthStatus: () => Promise.resolve({ authed: true }),
+    ccrLoginStart: () => Promise.resolve({ ok: true }),
+    ccrLoginCancel: () => Promise.resolve(),
+    qwenAuthStatus: () => Promise.resolve({ authed: true }),
+    qwenLoginStart: () => Promise.resolve({ ok: true }),
+    qwenLoginCancel: () => Promise.resolve(),
     cloudAuthStatus: () =>
       Promise.resolve({
         authed: false,

@@ -62,12 +62,11 @@
   overflow-y: auto;
 }
 .kb-tray-item {
+  /* Outer wrapper: a plain <div> (was a <button>; nested buttons inside
+     for the per-decision options are invalid HTML, so the row was
+     restructured into a div containing a "jump" button + an options
+     sibling). Keeps the spacing/border rhythm of the previous button. */
   padding: 10px 14px;
-  cursor: pointer;
-  background: transparent;
-  border: none;
-  text-align: left;
-  width: 100%;
   font-family: var(--ff-sans);
   color: var(--ink);
   display: flex;
@@ -79,6 +78,28 @@
 }
 .kb-tray-item:hover {
   background: var(--bg-2);
+}
+
+/* The clickable metadata block — was the outer button's role. */
+.kb-tray-jump {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kb-tray-jump:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 .kb-tray-num {
   font-family: var(--ff-mono);

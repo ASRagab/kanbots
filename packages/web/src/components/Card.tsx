@@ -1,6 +1,7 @@
 import { useDraggable } from '@dnd-kit/core';
 import { memo, useEffect, useState, type ChangeEvent, type MouseEvent } from 'react';
 import { api } from '../api.js';
+import { useFocusedRepo } from '../hooks/useFocusedRepo.js';
 import { dispatchIssuesRefetch } from '../hooks/useIssues.js';
 import {
   ageString,
@@ -16,12 +17,25 @@ export function cardDragId(issueNumber: number): string {
   return `card:${issueNumber}`;
 }
 
+/**
+ * Modifier flags surfaced to the host so it can decide between focus
+ * (plain click) and multi-select (shift / cmd / ctrl click). The card
+ * component itself stays oblivious to the policy — it just reports what
+ * keys were held.
+ */
+export interface CardSelectModifiers {
+  shiftKey: boolean;
+  metaOrCtrlKey: boolean;
+}
+
 export interface CardProps {
   issue: Issue;
   selected?: boolean;
+  /** Highlight ring used by the multi-select bulk action bar. */
+  multiSelected?: boolean;
   draggable?: boolean;
   liveTool?: { name: string; arg: string | null } | null;
-  onSelect?: (issueNumber: number) => void;
+  onSelect?: (issueNumber: number, modifiers: CardSelectModifiers) => void;
   onOpen?: (issueNumber: number) => void;
 }
 
@@ -180,6 +194,15 @@ function CardBody({
         ) : (
           <span className="kb-spacer" />
         )}
+        {issue.subIssueCount && issue.subIssueCount > 0 ? (
+          <span
+            className="kb-card-children-badge"
+            title={`${issue.subIssueCount} sub-issue${issue.subIssueCount === 1 ? '' : 's'}`}
+            aria-label={`Has ${issue.subIssueCount} sub-issue${issue.subIssueCount === 1 ? '' : 's'}`}
+          >
+            ↳{issue.subIssueCount}
+          </span>
+        ) : null}
         <span className="kb-assignees">
           {issue.assignees.slice(0, 3).map((login) => (
             <span
@@ -206,6 +229,7 @@ function ReviewActions({
   onAction?: () => void;
 }) {
   const [shipOpen, setShipOpen] = useState(false);
+  const { focusedRepoId } = useFocusedRepo();
   function stop(e: MouseEvent<HTMLDivElement>): void {
     e.stopPropagation();
   }
@@ -225,7 +249,10 @@ function ReviewActions({
   function spawnReviewer(e: MouseEvent<HTMLButtonElement>): void {
     e.stopPropagation();
     void api
-      .spawnReviewer(issueNumber)
+      .spawnReviewer(
+        issueNumber,
+        focusedRepoId !== null ? { repoId: focusedRepoId } : {},
+      )
       .then(() => {
         dispatchIssuesRefetch();
         onAction?.();
@@ -473,12 +500,17 @@ function DecisionActions({
   }
 
   return (
-    <div className="kb-card-actions" onClick={stop} role="group" aria-label="Decision options">
+    <div
+      className="kb-card-actions kb-card-decision-opts"
+      onClick={stop}
+      role="group"
+      aria-label="Decision options"
+    >
       {options.map((opt) => (
         <button
           key={opt.value}
           type="button"
-          className="kb-btn primary"
+          className="o"
           disabled={submitting}
           onClick={(e) => void pick(e, opt.value)}
         >
@@ -487,7 +519,7 @@ function DecisionActions({
       ))}
       <button
         type="button"
-        className="kb-btn ghost"
+        className="o dismiss"
         disabled={submitting}
         onClick={(e) => void dismiss(e)}
         title="Dismiss this decision and stop the run"
@@ -518,6 +550,7 @@ function CheckPill({
 function CardImpl({
   issue,
   selected = false,
+  multiSelected = false,
   draggable = true,
   liveTool = null,
   onSelect,
@@ -532,18 +565,22 @@ function CardImpl({
 
   function handleClick(e: MouseEvent<HTMLButtonElement>): void {
     e.preventDefault();
-    onSelect?.(issue.number);
+    onSelect?.(issue.number, {
+      shiftKey: e.shiftKey,
+      metaOrCtrlKey: e.metaKey || e.ctrlKey,
+    });
   }
   function handleDoubleClick(e: MouseEvent<HTMLButtonElement>): void {
     e.preventDefault();
     onOpen?.(issue.number);
   }
 
+  const ringClass = multiSelected ? ' is-selected' : '';
   return (
     <button
       type="button"
       ref={setNodeRef}
-      className={`kb-card ${stateCls}${selected ? ' kb-card-selected' : ''}${
+      className={`kb-card ${stateCls}${selected ? ' kb-card-selected' : ''}${ringClass}${
         drag.isDragging ? ' kb-card-source' : ''
       }`}
       onClick={handleClick}
@@ -558,6 +595,7 @@ function CardImpl({
 
 export const Card = memo(CardImpl, (prev, next) => {
   if (prev.selected !== next.selected) return false;
+  if (prev.multiSelected !== next.multiSelected) return false;
   if (prev.draggable !== next.draggable) return false;
   if (prev.onSelect !== next.onSelect) return false;
   if (prev.onOpen !== next.onOpen) return false;
@@ -573,6 +611,7 @@ export const Card = memo(CardImpl, (prev, next) => {
   if (a.status !== b.status) return false;
   if (a.labels.length !== b.labels.length) return false;
   if (a.assignees.length !== b.assignees.length) return false;
+  if ((a.subIssueCount ?? 0) !== (b.subIssueCount ?? 0)) return false;
   // ActiveRun identity by id and core mutable fields. Include every field the
   // card body actually renders (branch, checks, decision, preview) so a late
   // backend update — e.g. branchName landing after status='starting' was first

@@ -5,15 +5,22 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
 import { api } from '../../api.js';
 import { CardPreview } from '../Card.js';
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from '../forms/MarkdownEditor.js';
 import { ModelPicker } from '../forms/ModelPicker.js';
+import { useFocusedRepo } from '../../hooks/useFocusedRepo.js';
 import { dispatchIssuesRefetch } from '../../hooks/useIssues.js';
-import type { Issue } from '../../types.js';
+import { priorityFromLabels, tagFromLabels } from '../../labels.js';
+import type { CardTemplatePayload, Issue, ProviderId } from '../../types.js';
 
 type Mode = 'spec' | 'dispatch' | 'queue';
 type Tag = 'feat' | 'fix' | 'chore' | 'infra' | 'docs';
@@ -131,21 +138,104 @@ export function TaskCreateModal({
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyRef = useRef<MarkdownEditorHandle | null>(null);
   const [pasting, setPasting] = useState(0);
+  const { repos, focused, focusedRepoId } = useFocusedRepo();
+  const showRepoCaption = repos.length > 1 && focused !== null;
+  const [templates, setTemplates] = useState<CardTemplatePayload[]>([]);
+  const [templateId, setTemplateId] = useState<number | ''>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await api.listCardTemplates();
+        if (!cancelled) setTemplates(list);
+      } catch {
+        // Best-effort — templates are optional in the create flow.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function applyTemplate(t: CardTemplatePayload): void {
+    setTitle(t.titleTemplate);
+    // Place the caret where the template authored a {{cursor}} marker;
+    // strip the marker before applying. If the marker is missing the
+    // caret ends up at the end of the body, which is what a textarea
+    // does by default.
+    const raw = t.bodyTemplate ?? '';
+    const cursorIdx = raw.indexOf('{{cursor}}');
+    const next = raw.replace(/\{\{cursor\}\}/g, '');
+    setBody(next);
+    // Mirror the template's labels onto the type/priority pickers when
+    // possible — the type/priority segmented buttons are the canonical
+    // labels surface, so we keep them in sync rather than letting the
+    // template's labels race with the buttons' state at submit time.
+    const nextTag = tagFromLabels(t.labels, false);
+    if (
+      nextTag === 'FEAT' ||
+      nextTag === 'BUG' ||
+      nextTag === 'CHORE' ||
+      nextTag === 'INFRA' ||
+      nextTag === 'DOCS' ||
+      nextTag === 'FIX'
+    ) {
+      const map: Record<string, Tag> = {
+        FEAT: 'feat',
+        BUG: 'fix',
+        FIX: 'fix',
+        CHORE: 'chore',
+        INFRA: 'infra',
+        DOCS: 'docs',
+      };
+      const mapped = map[nextTag];
+      if (mapped) setTag(mapped);
+    }
+    const nextPri = priorityFromLabels(t.labels);
+    if (nextPri) setPriority(nextPri);
+    if (t.defaultProvider) {
+      setModelSelection({ provider: t.defaultProvider as ProviderId, model: 'opus' });
+    }
+    // Defer caret placement until after React has committed the new body
+    // value so selectionStart corresponds to the rendered DOM.
+    queueMicrotask(() => {
+      const ta = bodyRef.current?.getTextarea() ?? null;
+      if (!ta) return;
+      ta.focus();
+      const pos = cursorIdx === -1 ? next.length : cursorIdx;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+
+  function onPickTemplate(e: ChangeEvent<HTMLSelectElement>): void {
+    const raw = e.target.value;
+    if (raw === '') {
+      setTemplateId('');
+      return;
+    }
+    const id = Number.parseInt(raw, 10);
+    if (!Number.isFinite(id)) return;
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    if (t) applyTemplate(t);
+  }
 
   const insertAtCursor = useCallback((insert: string): void => {
     setBody((prev) => {
-      const ta = bodyRef.current;
+      const ta = bodyRef.current?.getTextarea() ?? null;
       if (!ta) return prev + insert;
       const start = ta.selectionStart ?? prev.length;
       const end = ta.selectionEnd ?? prev.length;
       const next = prev.slice(0, start) + insert + prev.slice(end);
       const cursor = start + insert.length;
       queueMicrotask(() => {
-        if (bodyRef.current) {
-          bodyRef.current.focus();
-          bodyRef.current.setSelectionRange(cursor, cursor);
+        const el = bodyRef.current?.getTextarea() ?? null;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(cursor, cursor);
         }
       });
       return next;
@@ -291,6 +381,7 @@ export function TaskCreateModal({
             ? { model: modelSelection.model, provider: modelSelection.provider }
             : { model }),
           ...(mode === 'spec' ? { appendSystemPrompt: SPEC_SYSTEM_PROMPT } : {}),
+          ...(focusedRepoId !== null ? { repoId: focusedRepoId } : {}),
         });
         // Cloud mode: onCreated above fired before the run row existed on
         // the server, so the card's latest_run was still null when the
@@ -360,6 +451,26 @@ export function TaskCreateModal({
         <div className="kb-modal-body">
           <main className="kb-modal-main">
             <form className="kb-tcm-content" onSubmit={(e) => void submit(e)}>
+              {templates.length > 0 ? (
+                <div className="kb-field">
+                  <label className="kb-field-label">
+                    From template
+                    <span className="kb-field-hint">prefill title, body, labels, agent</span>
+                  </label>
+                  <select
+                    className="kb-input"
+                    value={templateId === '' ? '' : String(templateId)}
+                    onChange={onPickTemplate}
+                  >
+                    <option value="">(start from scratch)</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={String(t.id)}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
               {/* TITLE */}
               <div className="kb-field">
                 <label className="kb-field-label">
@@ -427,12 +538,13 @@ export function TaskCreateModal({
                   Description
                   <span className="kb-field-hint">Markdown · use AC: for acceptance criteria</span>
                 </label>
-                <textarea
+                <MarkdownEditor
                   ref={bodyRef}
-                  className="kb-textarea"
                   value={body}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={setBody}
                   onPaste={(e) => void handlePaste(e)}
+                  rows={10}
+                  ariaLabel="Task description"
                   placeholder={`What is the user-facing outcome?\n\nAC:\n- A new user can register a passkey on first login\n- Existing users see a banner with passkey CTA\n\nTip: paste an image (⌘V / Ctrl+V) to attach it.`}
                 />
                 {pasting > 0 ? (
@@ -645,6 +757,16 @@ export function TaskCreateModal({
             </span>
           ) : null}
           <span className="grow" />
+          {showRepoCaption && (mode === 'spec' || mode === 'dispatch') && focused ? (
+            <span
+              className="hint"
+              style={{ fontFamily: 'var(--ff-mono)' }}
+              title={focused.repoPath}
+            >
+              Will run in: {focused.displayName ?? focused.repoPath.split('/').filter(Boolean).pop() ?? focused.repoPath}
+              {focused.targetBranch ? ` · ${focused.targetBranch}` : ''}
+            </span>
+          ) : null}
           <button type="button" className="kb-btn ghost" onClick={onClose}>
             Cancel
           </button>

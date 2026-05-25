@@ -1,5 +1,12 @@
 import type { Db } from '../db.js';
-import type { AgentRunId, Message, MessageId, Role, ThreadId } from '../types.js';
+import type {
+  AgentRunId,
+  ChatSessionId,
+  Message,
+  MessageId,
+  Role,
+  ThreadId,
+} from '../types.js';
 
 interface MessageRow {
   id: number;
@@ -10,6 +17,7 @@ interface MessageRow {
   agent_run_id: number | null;
   promoted_github_comment_id: number | null;
   promoted_at: string | null;
+  chat_session_id: number | null;
 }
 
 function rowToMessage(row: MessageRow): Message {
@@ -22,6 +30,7 @@ function rowToMessage(row: MessageRow): Message {
     agentRunId: row.agent_run_id,
     promotedGithubCommentId: row.promoted_github_comment_id,
     promotedAt: row.promoted_at,
+    chatSessionId: row.chat_session_id,
   };
 }
 
@@ -30,6 +39,9 @@ export interface CreateMessageInput {
   role: Role;
   body: string;
   agentRunId?: AgentRunId;
+  /** When set, the message is scoped to a chat session and shows only
+   *  when that session is the active filter. */
+  chatSessionId?: ChatSessionId | null;
 }
 
 export class MessagesRepo {
@@ -38,12 +50,13 @@ export class MessagesRepo {
   create(input: CreateMessageInput): Message {
     const createdAt = new Date().toISOString();
     const agentRunId = input.agentRunId ?? null;
+    const chatSessionId = input.chatSessionId ?? null;
     const result = this.db
       .prepare(
-        `INSERT INTO messages (thread_id, role, body, created_at, agent_run_id)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (thread_id, role, body, created_at, agent_run_id, chat_session_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.threadId, input.role, input.body, createdAt, agentRunId);
+      .run(input.threadId, input.role, input.body, createdAt, agentRunId, chatSessionId);
     return {
       id: Number(result.lastInsertRowid),
       threadId: input.threadId,
@@ -53,6 +66,7 @@ export class MessagesRepo {
       agentRunId,
       promotedGithubCommentId: null,
       promotedAt: null,
+      chatSessionId,
     };
   }
 
@@ -60,6 +74,14 @@ export class MessagesRepo {
     const rows = this.db
       .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY id')
       .all(threadId) as MessageRow[];
+    return rows.map(rowToMessage);
+  }
+
+  /** Same as `list` but filters to a single chat session. */
+  listBySession(sessionId: ChatSessionId): Message[] {
+    const rows = this.db
+      .prepare('SELECT * FROM messages WHERE chat_session_id = ? ORDER BY id')
+      .all(sessionId) as MessageRow[];
     return rows.map(rowToMessage);
   }
 

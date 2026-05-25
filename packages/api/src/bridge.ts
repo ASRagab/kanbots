@@ -20,6 +20,8 @@ import type {
   CardStatus,
   CardType,
   ChatConversation,
+  ChatSession,
+  ChatSessionStatus,
   CheckKind,
   DiffHunk,
   Learning,
@@ -64,6 +66,8 @@ export type {
   CardStatus,
   CardType,
   ChatConversation,
+  ChatSession,
+  ChatSessionStatus,
   CheckKind,
   DiffHunk,
   Learning,
@@ -99,6 +103,12 @@ export interface Config {
   /** How to react when an agent's tool_use targets a path outside its
    *  worktree. Default: 'warn'. */
   containmentMode?: ContainmentMode;
+  /** Absolute path to the dispatcher's preview-proxy injection assets
+   *  (`eruda.js`, `eruda-init.js`, `inspect.js`). Set by the host (the
+   *  desktop main process copies the files alongside its compiled
+   *  bundle). Headless contexts can leave this unset and the dispatcher
+   *  will fall back to its own dist layout. */
+  previewAssetsDir?: string;
 }
 
 export interface DraftIssueInput {
@@ -111,6 +121,31 @@ export interface DraftedIssue {
 }
 
 export type DraftIssueFn = (input: DraftIssueInput) => Promise<DraftedIssue>;
+
+/**
+ * Input handed to the runtime `draftPrDescription` function. The diff is
+ * supplied by the handler (already truncated to ~15KB before this is
+ * called), so the runtime layer is free to forward it to whichever model
+ * provider it has configured.
+ */
+export interface DraftPrDescriptionInput {
+  issueTitle: string;
+  issueBody?: string;
+  diff: string;
+  diffTruncated?: boolean;
+}
+
+export type DraftPrDescriptionFn = (
+  input: DraftPrDescriptionInput,
+) => Promise<DraftedIssue>;
+
+export interface DraftedPrDescription {
+  title: string;
+  body: string;
+  /** True when the diff handed to the model was truncated so the renderer
+   *  can show a small hint (the model is also told and may hedge in-body). */
+  diffTruncated: boolean;
+}
 
 export type SuggestFeatureEntryStatus =
   | 'backlog'
@@ -169,7 +204,18 @@ export interface SentryAnalyzerInput {
 
 export type SentryAnalyzerFn = (input: SentryAnalyzerInput) => Promise<SentrySuggestion>;
 
-export type ProviderId = 'claude-code' | 'codex-cli';
+export type ProviderId =
+  | 'claude-code'
+  | 'codex-cli'
+  | 'gemini-cli'
+  | 'amp-cli'
+  | 'cursor-cli'
+  | 'copilot-cli'
+  | 'opencode-cli'
+  | 'droid-cli'
+  | 'ccr-cli'
+  | 'qwen-cli'
+  | 'acp';
 
 export interface ProviderConfigPayload {
   id: ProviderId;
@@ -307,6 +353,13 @@ export interface DecoratedIssue extends Issue {
    * SSE endpoint replays the run's events even after it terminates,
    * keeping the thread visible across refreshes. Unset in local mode. */
   cloudLatestRunId?: string;
+  /** Number of direct sub-issues (children) linked to this issue.
+   * Populated by the local-mode list/get handlers; the board surfaces it
+   * as a small "↳N" badge so users can tell at a glance which cards
+   * have sub-issues without opening them. Zero when the issue has no
+   * children. Cloud mode leaves this unset until the cloud edition
+   * grows its own relations table. */
+  subIssueCount?: number;
 }
 
 export interface ThreadPayload {
@@ -349,11 +402,55 @@ export interface DismissCardResult {
   run: AgentRun;
 }
 
+/**
+ * Renderer-facing view of a saved card template. Templates are per
+ * workspace and surfaced both in their own settings modal (for CRUD +
+ * reorder) and as a quick-pick at the top of the create-task modal.
+ * `defaultProvider` stays as a free-form string (rather than narrowing
+ * to ProviderId) so retiring a provider id doesn't quietly invalidate
+ * stored templates — the renderer validates at point of use and falls
+ * back to "no default" if the value isn't a known provider.
+ */
+export interface CardTemplatePayload {
+  id: number;
+  workspaceId: string;
+  name: string;
+  titleTemplate: string;
+  bodyTemplate: string | null;
+  labels: string[];
+  defaultProvider: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ForkRunResult {
   source: number;
   run: AgentRun;
   worktree: string;
   branch: string;
+}
+
+/**
+ * Renderer-facing view of a parent ↔ child issue link. Carries the
+ * child's title + status alongside the relation id so the sub-issues
+ * list can render without an extra fetch per row. `child.status` is
+ * the StatusKey derived from labels (null = no `status:*` label, i.e.
+ * the inbox column); `child.state` is the open/closed flag from the
+ * underlying issue. Both fields are denormalised at read time, so a
+ * stale row only stays visible until the next refetch.
+ */
+export interface IssueRelationPayload {
+  id: number;
+  parentNumber: number;
+  childNumber: number;
+  child: {
+    number: number;
+    title: string;
+    status: StatusKey | null;
+    state: 'open' | 'closed';
+  };
+  createdAt: string;
 }
 
 export interface RunStatsResult {
@@ -439,6 +536,10 @@ export interface WorkspaceScriptsBridgePayload {
   };
 }
 
+export interface WorkspaceAcpCommandBridgePayload {
+  acpCommand: string | null;
+}
+
 export interface WorkspaceRunScriptResult {
   ok: boolean;
   exitCode: number | null;
@@ -447,6 +548,44 @@ export interface WorkspaceRunScriptResult {
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
   error?: string;
+}
+
+/**
+ * Renderer-facing PR comment payload. Covers two GitHub comment classes
+ * via a single `inline` discriminator:
+ *
+ *   - `inline: false` — conversation-tab comments on the PR (i.e. the
+ *     same comment thread reachable via the regular issue-comments
+ *     endpoint because PRs ARE issues under the hood).
+ *   - `inline: true` — review comments anchored to a file + line in
+ *     the diff. `filePath` (and ideally `lineNumber`) are set for these.
+ *
+ * `filePath` / `lineNumber` are intentionally optional so the renderer
+ * can render the same row component for both classes; when missing the
+ * meta row simply omits the location.
+ */
+export interface PrCommentPayload {
+  id: number;
+  author: { login: string; avatarUrl: string | null };
+  body: string;
+  createdAt: string;
+  updatedAt: string | null;
+  htmlUrl: string;
+  /** True for review (inline) comments; false for PR conversation comments. */
+  inline: boolean;
+  filePath?: string;
+  lineNumber?: number;
+}
+
+/**
+ * Result envelope for `pr-comments:list`. `linkedPullNumber` is null
+ * when no PR could be located for the issue — the renderer hides the
+ * section entirely in that case so non-PR-bearing issues stay clean.
+ */
+export interface PrCommentsListResult {
+  linkedPullNumber: number | null;
+  linkedPullHtmlUrl: string | null;
+  comments: PrCommentPayload[];
 }
 
 /**
@@ -487,6 +626,36 @@ export interface WorkspaceFolderPayload {
   current: boolean;
 }
 
+/**
+ * Multi-repo workspace member. Each workspace mounts N repos; agent runs
+ * pick one via `repoId` (defaults to the primary if unset). `targetBranch`
+ * is the branch new worktrees branch from when a run starts in this repo.
+ */
+export interface WorkspaceRepoPayload {
+  id: number;
+  workspaceId: string;
+  repoPath: string;
+  displayName: string | null;
+  targetBranch: string | null;
+  isPrimary: boolean;
+  addedAt: string;
+}
+
+/**
+ * Quick per-repo git status snapshot consumed by the rail's multi-repo
+ * switcher. `aheadCount`/`behindCount` compare HEAD against the repo's
+ * `targetBranch` (defaulting to `main` when unset); `dirtyCount` is a
+ * line count from `git status --porcelain`. Each field degrades to a
+ * safe zero / null when the underlying git invocation fails, so the
+ * renderer can still render the row.
+ */
+export interface WorkspaceRepoStatus {
+  branch: string | null;
+  aheadCount: number;
+  behindCount: number;
+  dirtyCount: number;
+}
+
 export type DiffFileStatus =
   | 'added'
   | 'modified'
@@ -519,6 +688,13 @@ export interface PendingDecisionPayload {
 
 export interface PreviewStatePayload {
   url: string | null;
+  /**
+   * Raw upstream dev-server URL when the proxy is in use, otherwise equal
+   * to `url`. The renderer surfaces this for "Open in browser" so the
+   * external page is served by the underlying dev server (with native
+   * devtools) rather than the in-iframe proxy.
+   */
+  upstreamUrl?: string | null;
   state: PreviewState;
   pid: number | null;
 }
@@ -587,6 +763,15 @@ export interface BridgeChannels {
       model?: string;
       provider?: ProviderId;
       appendSystemPrompt?: string;
+      /** Workspace repo to base the dispatched run's worktree on. Only used
+       *  when the post triggers a new run (i.e. `dispatch !== false` and no
+       *  resumable run is already attached to the thread). Omit to use the
+       *  workspace's primary repo. */
+      repoId?: number;
+      /** When set the resulting message + agent run is tagged with this
+       *  chat-session id so the session dropdown in TaskDetailModal can
+       *  filter the transcript and surface per-session lifecycle. */
+      chatSessionId?: number;
     };
     result: PostMessageResult;
   };
@@ -597,6 +782,9 @@ export interface BridgeChannels {
       fromStatus: StatusKey | null;
       model?: string;
       provider?: ProviderId;
+      /** Workspace repo to base the run's worktree on. Omit to use the
+       *  workspace's primary repo. */
+      repoId?: number;
     };
     result: DispatchResult;
   };
@@ -608,6 +796,9 @@ export interface BridgeChannels {
       appendSystemPrompt?: string;
       model?: string;
       provider?: ProviderId;
+      /** Workspace repo to base the run's worktree on. Omit to use the
+       *  workspace's primary repo. */
+      repoId?: number;
     };
     result: AgentRun;
   };
@@ -620,11 +811,23 @@ export interface BridgeChannels {
       number: number;
       subtasks: Array<{ title: string; body?: string }>;
       dispatch?: boolean;
+      /** Workspace repo to base each dispatched child run's worktree on.
+       *  Only used when `dispatch === true`. Omit to use the workspace's
+       *  primary repo. */
+      repoId?: number;
     };
     result: SplitResult;
   };
   'issues:reviewer': {
-    args: { number: number; threadId?: number; prompt?: string; model?: string };
+    args: {
+      number: number;
+      threadId?: number;
+      prompt?: string;
+      model?: string;
+      /** Workspace repo to base the reviewer run's worktree on. Omit to use
+       *  the workspace's primary repo. */
+      repoId?: number;
+    };
     result: AgentRun;
   };
   'ship:status': {
@@ -688,8 +891,18 @@ export interface BridgeChannels {
     result: PromoteCommitResult;
   };
   'agent-runs:promote-pr': {
-    args: { runId: number };
+    /**
+     * `title` and `body` override the auto-derived defaults (issue title /
+     * issue body). When neither is provided, the handler falls back to
+     * the originating issue — preserving the pre-existing behaviour for
+     * callers that haven't adopted the draft-then-open flow yet.
+     */
+    args: { runId: number; title?: string; body?: string };
     result: PromotePrResult;
+  };
+  'agent-runs:draft-pr-description': {
+    args: { runId: number };
+    result: DraftedPrDescription;
   };
   'agent-runs:events:subscribe': {
     args: { runId: number; sinceSeq?: number };
@@ -706,6 +919,40 @@ export interface BridgeChannels {
   'cards:dismiss': {
     args: { cardId: number };
     result: DismissCardResult;
+  };
+  'card-templates:list': { args: void; result: CardTemplatePayload[] };
+  'card-templates:create': {
+    args: {
+      name: string;
+      titleTemplate: string;
+      bodyTemplate?: string | null;
+      labels?: string[];
+      defaultProvider?: ProviderId | null;
+    };
+    result: CardTemplatePayload;
+  };
+  'card-templates:update': {
+    args: {
+      id: number;
+      name?: string;
+      titleTemplate?: string;
+      bodyTemplate?: string | null;
+      labels?: string[];
+      defaultProvider?: ProviderId | null;
+    };
+    result: CardTemplatePayload;
+  };
+  'card-templates:delete': {
+    args: { id: number };
+    result: { ok: boolean };
+  };
+  'card-templates:reorder': {
+    args: { ids: number[] };
+    result: CardTemplatePayload[];
+  };
+  'card-templates:instantiate': {
+    args: { id: number };
+    result: DecoratedIssue;
   };
   'decisions:pending': { args: void; result: PendingDecisionPayload[] };
   'cost:today': { args: void; result: CostTodayResult };
@@ -735,6 +982,45 @@ export interface BridgeChannels {
   'workspace:run-script': {
     args: { kind: 'setup' | 'cleanup' };
     result: WorkspaceRunScriptResult;
+  };
+  'workspace:get-acp-command': { args: void; result: WorkspaceAcpCommandBridgePayload };
+  'workspace:set-acp-command': {
+    args: { acpCommand: string | null };
+    result: WorkspaceAcpCommandBridgePayload;
+  };
+  'workspace:repos-list': { args: void; result: WorkspaceRepoPayload[] };
+  'workspace:repos-add': {
+    args: { repoPath: string; displayName?: string; targetBranch?: string };
+    result: WorkspaceRepoPayload;
+  };
+  'workspace:repos-remove': { args: { id: number }; result: { ok: boolean } };
+  'workspace:repos-set-primary': {
+    args: { id: number };
+    result: WorkspaceRepoPayload[];
+  };
+  'workspace:repos-set-target-branch': {
+    args: { id: number; targetBranch: string | null };
+    result: WorkspaceRepoPayload;
+  };
+  'workspace:repos-set-display-name': {
+    args: { id: number; displayName: string | null };
+    result: WorkspaceRepoPayload;
+  };
+  'workspace:repo-status': {
+    args: { repoId: number };
+    result: WorkspaceRepoStatus;
+  };
+  'workspace:open-repo-in-ide': {
+    args: { repoId: number; ide?: 'vscode' | 'cursor' | 'system' };
+    result: { ok: boolean; ide: 'vscode' | 'cursor' | 'system' | null; error?: string };
+  };
+  'pr-comments:list': {
+    args: { issueNumber: number };
+    result: PrCommentsListResult;
+  };
+  'pr-comments:reply': {
+    args: { issueNumber: number; body: string };
+    result: PrCommentPayload;
   };
   'review-comments:list': {
     args: { runId: number; includeConsumed?: boolean };
@@ -843,12 +1129,66 @@ export interface BridgeChannels {
       model?: string;
       provider?: ProviderId;
       appendSystemPrompt?: string;
+      /** When provided the message is posted into this specific session;
+       *  otherwise the conversation's most-recent session is used (and a
+       *  fresh one is created if the conversation has none yet). */
+      sessionId?: number;
     };
     result: ChatPostMessageResult;
   };
   'chat:stop-run': {
     args: { runId: number };
     result: AgentRun;
+  };
+  'chat:sessions:list': {
+    args: { conversationId: number };
+    result: ChatSessionPayload[];
+  };
+  'chat:sessions:create': {
+    args: {
+      conversationId: number;
+      agentProvider: ProviderId;
+      agentModel?: string;
+      title?: string;
+    };
+    result: ChatSessionPayload;
+  };
+  'chat:sessions:rename': {
+    args: { id: number; title: string | null };
+    result: ChatSessionPayload;
+  };
+  'chat:sessions:delete': {
+    args: { id: number };
+    result: { ok: boolean };
+  };
+  'chat:sessions:set-active': {
+    args: { conversationId: number; sessionId: number };
+    result: { ok: boolean };
+  };
+  // Issue-scoped sibling channels — same shape as chat:sessions:* but
+  // keyed on threads.id (the per-issue thread). Kept as a parallel set
+  // of channels rather than overloading the conversation channels so
+  // existing standalone-chat callers stay untouched.
+  'chat:thread-sessions:list': {
+    args: { threadId: number };
+    result: ChatSessionPayload[];
+  };
+  'chat:thread-sessions:create': {
+    args: {
+      threadId: number;
+      agentProvider: ProviderId;
+      agentModel?: string;
+      title?: string;
+    };
+    result: ChatSessionPayload;
+  };
+  'chat:thread-sessions:rename': {
+    args: { id: number; title: string | null };
+    result: ChatSessionPayload;
+  };
+  'chat:thread-sessions:delete': {
+    args: { id: number };
+    result: { ok: boolean };
   };
   'learnings:list': {
     args: {
@@ -901,9 +1241,29 @@ export interface BridgeChannels {
     };
     result: FrontierPoint[];
   };
+  'analytics:recent-activity': {
+    args: { limit?: number };
+    result: RecentActivityPayload[];
+  };
   'agent-runs:hunks:list': {
     args: { runId: number };
     result: DiffHunk[];
+  };
+  'issue-relations:list-children': {
+    args: { parentNumber: number };
+    result: IssueRelationPayload[];
+  };
+  'issue-relations:list-parents': {
+    args: { childNumber: number };
+    result: IssueRelationPayload[];
+  };
+  'issue-relations:add': {
+    args: { parentNumber: number; childNumber: number };
+    result: IssueRelationPayload;
+  };
+  'issue-relations:remove': {
+    args: { id: number };
+    result: { ok: boolean };
   };
 }
 
@@ -938,6 +1298,77 @@ export interface FrontierPoint {
   successRate: number;
 }
 
+/**
+ * One row in the rail's "Activity" feed. Each entry corresponds to a
+ * persisted agent_event joined with its run and parent thread, so the
+ * renderer can show "#42 · Edit src/foo.ts" without an extra fetch.
+ *
+ * `kind` is a coarse classification of what happened — derived from the
+ * underlying event type plus a small payload sniff (e.g. tool name). The
+ * renderer uses `kind` to pick an icon and a tone; `summary` is the
+ * one-line label.
+ */
+export type RecentActivityKind =
+  | 'tool_use'
+  | 'tool_result'
+  | 'text'
+  | 'error'
+  | 'decision'
+  | 'completed'
+  | 'started';
+
+export interface RecentActivityPayload {
+  /** Stable id for keying — the underlying agent_event id. */
+  id: number;
+  agentRunId: number;
+  /** Issue number on the run's thread; used as the clickable target. */
+  issueNumber: number;
+  kind: RecentActivityKind;
+  /** One-line description e.g. "Edit src/api.ts" or "Awaiting decision". */
+  summary: string;
+  /** ISO timestamp of the event. */
+  createdAt: string;
+}
+
+/**
+ * Renderer-facing view of a chat session. Mirrors the persisted shape
+ * but keeps a separate type so the bridge can evolve independently of
+ * the SQLite row layout. The `status` field is the most recent agent
+ * lifecycle observed for the session; `agentProvider` pins the CLI
+ * that should be spawned when the user posts into this session.
+ *
+ * Exactly one of `conversationId` / `threadId` is non-null — the
+ * dichotomy mirrors the underlying storage (standalone chat surface vs
+ * issue thread).
+ */
+export interface ChatSessionPayload {
+  id: number;
+  conversationId: number | null;
+  threadId: number | null;
+  agentProvider: ProviderId;
+  agentModel: string | null;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string | null;
+  status: ChatSessionStatus;
+}
+
+export function chatSessionToPayload(session: ChatSession): ChatSessionPayload {
+  return {
+    id: session.id,
+    conversationId: session.conversationId,
+    threadId: session.threadId,
+    agentProvider: session.agentProvider,
+    agentModel: session.agentModel,
+    title: session.title,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    lastMessageAt: session.lastMessageAt,
+    status: session.status,
+  };
+}
+
 export interface ChatPayload {
   conversation: ChatConversation;
   messages: Message[];
@@ -956,6 +1387,13 @@ export interface ChatPayload {
   cards: Card[];
   activeRun: AgentRun | null;
   latestRun: AgentRun | null;
+  /**
+   * Every session belonging to this conversation, sorted most-recent-first.
+   * The renderer drives the session-dropdown off this list and filters
+   * `messages`/`events`/`cards` by the active session id client-side
+   * (every persisted message carries its `chatSessionId`).
+   */
+  sessions: ChatSessionPayload[];
 }
 
 export interface ChatPostMessageResult {

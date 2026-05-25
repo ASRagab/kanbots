@@ -305,6 +305,14 @@ export function registerWorkspaceTreeIpc(opts: WorkspaceTreeIpcOptions): void {
     wc.on('destroyed', () => senders.delete(wc));
   });
 
+  // Per-repo status (branch + ahead/behind + dirty count) lives on the
+  // workspace-handler bridge as `workspace:repo-status`, routed through
+  // the standard `kanbots:invoke:` prefix so it can reuse the same
+  // workspace_repos lookup and validation as the rest of the multi-repo
+  // surface. See `repoStatus` in packages/api/src/handlers/workspace.ts.
+  // The rail switcher caches per-row results for ~30s so opening the
+  // menu doesn't fan out one git invocation per row on every render.
+
   /**
    * Returns every git worktree under the active repo, augmented with a
    * dirty-file count derived from the same status sweep used by the

@@ -63,6 +63,14 @@ export interface BootstrapPayload {
   cloudRecents: RecentCloudWorkspace[];
   claudeAuthed: boolean;
   codexAuthed: boolean;
+  geminiAuthed: boolean;
+  ampAuthed: boolean;
+  cursorAuthed: boolean;
+  copilotAuthed: boolean;
+  opencodeAuthed: boolean;
+  droidAuthed: boolean;
+  ccrAuthed: boolean;
+  qwenAuthed: boolean;
   cloudAuthed: boolean;
   cloudPromptDismissed: boolean;
 }
@@ -109,6 +117,30 @@ export interface KanbotsBridge {
   codexAuthStatus(): Promise<{ authed: boolean }>;
   codexLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
   codexLoginCancel(): Promise<void>;
+  geminiAuthStatus(): Promise<{ authed: boolean }>;
+  geminiLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  geminiLoginCancel(): Promise<void>;
+  ampAuthStatus(): Promise<{ authed: boolean }>;
+  ampLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  ampLoginCancel(): Promise<void>;
+  cursorAuthStatus(): Promise<{ authed: boolean }>;
+  cursorLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  cursorLoginCancel(): Promise<void>;
+  copilotAuthStatus(): Promise<{ authed: boolean }>;
+  copilotLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  copilotLoginCancel(): Promise<void>;
+  opencodeAuthStatus(): Promise<{ authed: boolean }>;
+  opencodeLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  opencodeLoginCancel(): Promise<void>;
+  droidAuthStatus(): Promise<{ authed: boolean }>;
+  droidLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  droidLoginCancel(): Promise<void>;
+  ccrAuthStatus(): Promise<{ authed: boolean }>;
+  ccrLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  ccrLoginCancel(): Promise<void>;
+  qwenAuthStatus(): Promise<{ authed: boolean }>;
+  qwenLoginStart(): Promise<{ ok: true } | { ok: false; error: string }>;
+  qwenLoginCancel(): Promise<void>;
   cloudAuthStatus(): Promise<CloudStatusPayload>;
   cloudLoginStart(opts?: { baseUrl?: string }): Promise<CloudLoginStartResult>;
   cloudLoginPoll(): Promise<CloudLoginPollResult>;
@@ -205,7 +237,18 @@ export interface KanbotsBridge {
     prompt: string;
     appendSystemPrompt?: string;
     model?: string;
-    provider?: 'claude-code' | 'codex-cli';
+    provider?:
+      | 'claude-code'
+      | 'codex-cli'
+      | 'gemini-cli'
+      | 'amp-cli'
+      | 'cursor-cli'
+      | 'copilot-cli'
+      | 'opencode-cli'
+      | 'droid-cli'
+      | 'ccr-cli'
+      | 'qwen-cli'
+      | 'acp';
   }): Promise<{ runId: string }>;
   workspaceCurrentRoot(): Promise<{ repoRoot: string | null }>;
   workspaceReadDir(args: {

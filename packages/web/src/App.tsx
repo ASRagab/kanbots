@@ -24,11 +24,13 @@ import { TaskDetailModal } from './components/modals/TaskDetailModal.js';
 import { TaskCreateModal } from './components/modals/TaskCreateModal.js';
 import { SplitModal } from './components/modals/SplitModal.js';
 import { ArchiveModal } from './components/modals/ArchiveModal.js';
+import { CardTemplatesSettingsModal } from './components/modals/CardTemplatesSettingsModal.js';
 import { CloudSettingsModal } from './components/modals/CloudSettingsModal.js';
 import { HouseRulesSettingsModal } from './components/modals/HouseRulesSettingsModal.js';
 import { RepoScriptsSettingsModal } from './components/modals/RepoScriptsSettingsModal.js';
 import { ProvidersSettingsModal } from './components/modals/ProvidersSettingsModal.js';
 import { SentrySettingsModal } from './components/modals/SentrySettingsModal.js';
+import { WorkspaceReposSettingsModal } from './components/modals/WorkspaceReposSettingsModal.js';
 import { Stats } from './components/Stats.js';
 import { Tray } from './components/tray/Tray.js';
 import { Palette } from './components/palette/Palette.js';
@@ -52,6 +54,14 @@ interface AppProps {
   hasBridge: boolean;
   initialClaudeAuthed: boolean;
   initialCodexAuthed: boolean;
+  initialGeminiAuthed: boolean;
+  initialAmpAuthed: boolean;
+  initialCursorAuthed: boolean;
+  initialCopilotAuthed: boolean;
+  initialOpencodeAuthed: boolean;
+  initialDroidAuthed: boolean;
+  initialCcrAuthed: boolean;
+  initialQwenAuthed: boolean;
   initialCloudAuthed: boolean;
   initialCloudPromptDismissed: boolean;
 }
@@ -108,6 +118,8 @@ function ShellHost({
     null | { autoRun?: 'setup' | 'cleanup' }
   >(null);
   const [sentrySettingsOpen, setSentrySettingsOpen] = useState(false);
+  const [reposOpen, setReposOpen] = useState(false);
+  const [cardTemplatesOpen, setCardTemplatesOpen] = useState(false);
   const { mutate, issues } = useIssues();
 
   useEffect(() => {
@@ -116,6 +128,24 @@ function ShellHost({
     }
     window.addEventListener('kanbots:open-house-rules', onOpen);
     return () => window.removeEventListener('kanbots:open-house-rules', onOpen);
+  }, []);
+
+  useEffect(() => {
+    function onOpen(): void {
+      setReposOpen(true);
+    }
+    window.addEventListener('kanbots:open-workspace-repos', onOpen);
+    return () =>
+      window.removeEventListener('kanbots:open-workspace-repos', onOpen);
+  }, []);
+
+  useEffect(() => {
+    function onOpen(): void {
+      setCardTemplatesOpen(true);
+    }
+    window.addEventListener('kanbots:open-card-templates', onOpen);
+    return () =>
+      window.removeEventListener('kanbots:open-card-templates', onOpen);
   }, []);
 
   useEffect(() => {
@@ -220,7 +250,9 @@ function ShellHost({
                 onOpenCloud={() => setCloudSettingsOpen(true)}
                 onOpenRules={() => setHouseRulesOpen(true)}
                 onOpenScripts={() => setScriptsOpen({})}
+                onOpenRepos={() => setReposOpen(true)}
                 onOpenSentry={() => setSentrySettingsOpen(true)}
+                onOpenCardTemplates={() => setCardTemplatesOpen(true)}
               />
             ) : null
           }
@@ -229,12 +261,17 @@ function ShellHost({
               onOpenDetail={openDetail}
               onOpenCreate={() => openCreate()}
               onOpenPalette={() => setPaletteOpen(true)}
+              onOpenStats={() => setStatsOpen(true)}
             />
           }
         />
       </Window>
       {detailIssueNumber !== null ? (
-        <TaskDetailModal issueNumber={detailIssueNumber} onClose={closeDetail} />
+        <TaskDetailModal
+          issueNumber={detailIssueNumber}
+          onClose={closeDetail}
+          onOpenDetail={openDetail}
+        />
       ) : null}
       {createOpen ? (
         <TaskCreateModal
@@ -285,6 +322,12 @@ function ShellHost({
       {sentrySettingsOpen ? (
         <SentrySettingsModal onClose={() => setSentrySettingsOpen(false)} />
       ) : null}
+      {reposOpen ? (
+        <WorkspaceReposSettingsModal onClose={() => setReposOpen(false)} />
+      ) : null}
+      {cardTemplatesOpen ? (
+        <CardTemplatesSettingsModal onClose={() => setCardTemplatesOpen(false)} />
+      ) : null}
       {tweaksOpen ? (
         <TweaksPanel
           tweaks={tweaks}
@@ -319,6 +362,14 @@ export function App({
   hasBridge,
   initialClaudeAuthed,
   initialCodexAuthed,
+  initialGeminiAuthed,
+  initialAmpAuthed,
+  initialCursorAuthed,
+  initialCopilotAuthed,
+  initialOpencodeAuthed,
+  initialDroidAuthed,
+  initialCcrAuthed,
+  initialQwenAuthed,
   initialCloudAuthed,
   initialCloudPromptDismissed,
 }: AppProps) {
@@ -404,11 +455,22 @@ export function App({
   // Providers gate. The overlay is non-dismissible — the kanban renders
   // behind it but can't be interacted with until at least one provider is
   // configured. The initial auth flags are surfaced so a fresh install with
-  // either Claude Code or codex-cli already signed in unblocks immediately
+  // any of the supported agent CLIs already signed in unblocks immediately
   // before the providers query resolves.
   const anyConfigured =
     providers?.anyConfigured ??
-    (hasBridge ? initialClaudeAuthed || initialCodexAuthed : true);
+    (hasBridge
+      ? initialClaudeAuthed ||
+        initialCodexAuthed ||
+        initialGeminiAuthed ||
+        initialAmpAuthed ||
+        initialCursorAuthed ||
+        initialCopilotAuthed ||
+        initialOpencodeAuthed ||
+        initialDroidAuthed ||
+        initialCcrAuthed ||
+        initialQwenAuthed
+      : true);
 
   if (hasBridge && !anyConfigured) {
     return (

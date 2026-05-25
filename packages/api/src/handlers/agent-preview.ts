@@ -18,6 +18,7 @@ export interface PreviewArgs {
 export interface StartPreviewImplOptions {
   cwd: string;
   startCommandLine?: string;
+  assetsDir?: string;
 }
 
 export type StartPreviewImpl = (opts: StartPreviewImplOptions) => Promise<PreviewHandle>;
@@ -31,8 +32,10 @@ export async function getPreview(
   const parsed = parseArgs(idSchema, args);
   const run = deps.store.agentRuns.findById(parsed.runId);
   if (!run) throw notFound(`agent run ${parsed.runId} not found`);
+  const live = handles.get(parsed.runId);
   return {
     url: run.previewUrl,
+    upstreamUrl: live?.upstreamUrl ?? run.previewUrl ?? null,
     state: run.previewState ?? 'idle',
     pid: run.previewPid,
   };
@@ -53,7 +56,12 @@ export async function startRunPreview(
 
   const existing = handles.get(parsed.runId);
   if (existing) {
-    return { url: existing.url, state: existing.state, pid: existing.pid };
+    return {
+      url: existing.url,
+      upstreamUrl: existing.upstreamUrl,
+      state: existing.state,
+      pid: existing.pid,
+    };
   }
 
   const startImpl: StartPreviewImpl =
@@ -71,11 +79,14 @@ export async function startRunPreview(
     }
   }
 
+  const assetsDir = deps.config.previewAssetsDir;
+
   deps.store.agentRuns.update(parsed.runId, { previewState: 'booting' });
   try {
     const handle = await startImpl({
       cwd: run.worktreePath,
       ...(startCommandLine !== undefined ? { startCommandLine } : {}),
+      ...(assetsDir !== undefined ? { assetsDir } : {}),
     });
     handles.set(parsed.runId, handle);
     deps.store.agentRuns.update(parsed.runId, {
@@ -83,7 +94,12 @@ export async function startRunPreview(
       previewState: handle.state,
       previewPid: handle.pid,
     });
-    return { url: handle.url, state: handle.state, pid: handle.pid };
+    return {
+      url: handle.url,
+      upstreamUrl: handle.upstreamUrl,
+      state: handle.state,
+      pid: handle.pid,
+    };
   } catch (err) {
     deps.store.agentRuns.update(parsed.runId, {
       previewState: 'crashed',
@@ -106,5 +122,5 @@ export async function stopRunPreview(
     previewState: 'stopped',
     previewPid: null,
   });
-  return { url: null, state: 'stopped', pid: null };
+  return { url: null, upstreamUrl: null, state: 'stopped', pid: null };
 }

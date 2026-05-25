@@ -6,6 +6,7 @@ import { useIssues } from '../../hooks/useIssues.js';
 import { useWorkspace } from '../../hooks/useWorkspace.js';
 import { ageString, colorForLogin } from '../../labels.js';
 import type { ChatConversation, Issue } from '../../types.js';
+import { ActivitySection } from './ActivitySection.js';
 import { CollapsibleSection } from './CollapsibleSection.js';
 import { WorkspaceTree } from './WorkspaceTree.js';
 import { WorktreesSection } from './WorktreesSection.js';
@@ -21,7 +22,9 @@ export interface LeftRailProps {
   onOpenCloud?: () => void;
   onOpenRules?: () => void;
   onOpenScripts?: () => void;
+  onOpenRepos?: () => void;
   onOpenSentry?: () => void;
+  onOpenCardTemplates?: () => void;
 }
 
 
@@ -197,7 +200,9 @@ export function LeftRail({
   onOpenCloud,
   onOpenRules,
   onOpenScripts,
+  onOpenRepos,
   onOpenSentry,
+  onOpenCardTemplates,
 }: LeftRailProps) {
   const ws = useWorkspace();
   const { issues } = useIssues();
@@ -264,6 +269,8 @@ export function LeftRail({
       </CollapsibleSection>
 
       <WorktreesSection />
+
+      <ActivitySection onSelectIssue={onSelectIssue} />
 
       {liveAgents.length > 0 ? (
         <CollapsibleSection
@@ -376,6 +383,24 @@ export function LeftRail({
             >
               <span className="kb-rail-account-icon" aria-hidden>▸_</span>
               Repo scripts
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="kb-rail-account-item"
+              onClick={() => pick(onOpenRepos)}
+            >
+              <span className="kb-rail-account-icon" aria-hidden>⎘</span>
+              Repos
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="kb-rail-account-item"
+              onClick={() => pick(onOpenCardTemplates)}
+            >
+              <span className="kb-rail-account-icon" aria-hidden>◳</span>
+              Card templates
             </button>
             <div className="kb-rail-account-sep" role="separator" />
             <button

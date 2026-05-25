@@ -1,58 +1,50 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import {
+  DIFF_PREFS_DEFAULTS as STORE_DIFF_PREFS_DEFAULTS,
+  usePrefsStore,
+  type DiffPrefs as StoreDiffPrefs,
+  type DiffViewMode as StoreDiffViewMode,
+} from '../stores/usePrefsStore.js';
 
-export type DiffViewMode = 'unified' | 'split';
+export type DiffViewMode = StoreDiffViewMode;
+export type DiffPrefs = StoreDiffPrefs;
 
-export interface DiffPrefs {
-  mode: DiffViewMode;
-  ignoreWhitespace: boolean;
-}
+// Re-exported so existing imports (`import { DIFF_PREFS_DEFAULTS } from
+// '../hooks/useDiffPrefs.js'`) keep working after the unified store moved
+// the source of truth.
+export const DIFF_PREFS_DEFAULTS = STORE_DIFF_PREFS_DEFAULTS;
 
-export const DIFF_PREFS_DEFAULTS: DiffPrefs = {
-  mode: 'unified',
-  ignoreWhitespace: true,
-};
-
-const STORAGE_KEY = 'kanbots:diff-prefs';
-
-function read(): DiffPrefs {
-  if (typeof window === 'undefined') return DIFF_PREFS_DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DIFF_PREFS_DEFAULTS;
-    const parsed = JSON.parse(raw) as Partial<DiffPrefs>;
-    return { ...DIFF_PREFS_DEFAULTS, ...parsed };
-  } catch {
-    return DIFF_PREFS_DEFAULTS;
-  }
-}
-
-function write(p: DiffPrefs): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
-  } catch {
-    // private mode / quota — fall through
-  }
-}
-
+/**
+ * Thin wrapper around the unified prefs store. Kept so existing call sites
+ * (FileChangeViewer, etc.) don't need to change shape — they still get the
+ * `{ prefs, set, toggleMode }` API. Internally the state lives in
+ * `usePrefsStore` under the `diff` slice and is persisted to the canonical
+ * `kanbots:prefs` localStorage key.
+ *
+ * New code is encouraged to read scoped selectors directly:
+ *   const mode = useDiffMode();
+ *   const ignore = useDiffIgnoreWhitespace();
+ *   const setDiffMode = usePrefsStore((s) => s.setDiffMode);
+ */
 export function useDiffPrefs(): {
   prefs: DiffPrefs;
   set: <K extends keyof DiffPrefs>(key: K, value: DiffPrefs[K]) => void;
   toggleMode: () => void;
 } {
-  const [prefs, setPrefs] = useState<DiffPrefs>(() => read());
+  const prefs = usePrefsStore((s) => s.diff);
+  const setDiffPref = usePrefsStore((s) => s.setDiffPref);
+  const setDiffMode = usePrefsStore((s) => s.setDiffMode);
 
-  useEffect(() => {
-    write(prefs);
-  }, [prefs]);
-
-  const set = useCallback(<K extends keyof DiffPrefs>(key: K, value: DiffPrefs[K]) => {
-    setPrefs((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  const set = useCallback(
+    <K extends keyof DiffPrefs>(key: K, value: DiffPrefs[K]) => {
+      setDiffPref(key, value);
+    },
+    [setDiffPref],
+  );
 
   const toggleMode = useCallback(() => {
-    setPrefs((prev) => ({ ...prev, mode: prev.mode === 'unified' ? 'split' : 'unified' }));
-  }, []);
+    setDiffMode(prefs.mode === 'unified' ? 'split' : 'unified');
+  }, [prefs.mode, setDiffMode]);
 
   return { prefs, set, toggleMode };
 }

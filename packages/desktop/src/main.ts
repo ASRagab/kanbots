@@ -18,6 +18,7 @@ import {
   type ChatHandlers,
   type ChatToolRuntime,
   type DraftIssueFn,
+  type DraftPrDescriptionFn,
   type Handlers,
   type SentryAnalyzerFn,
   type SentryRuntime,
@@ -25,7 +26,12 @@ import {
   type ToolBridge,
 } from '@kanbots/api';
 import { GitHubClient, resolveGitHubToken, type IssueSource } from '@kanbots/core';
-import { createComposer, createSentryAnalyzer, createSuggester } from '@kanbots/dispatcher';
+import {
+  createComposer,
+  createPrDescriptionDrafter,
+  createSentryAnalyzer,
+  createSuggester,
+} from '@kanbots/dispatcher';
 import {
   describeKanbotsDir,
   ensureGitignoreEntry,
@@ -50,6 +56,64 @@ import {
   isCodexAuthenticated,
   startCodexLogin,
 } from './codex-auth.js';
+import {
+  cancelGeminiLogin,
+  GEMINI_AUTH_PATH,
+  isGeminiAuthenticated,
+  startGeminiLogin,
+} from './gemini-auth.js';
+import {
+  AMP_AUTH_PATH,
+  AMP_SETTINGS_PATH,
+  cancelAmpLogin,
+  isAmpAuthenticated,
+  startAmpLogin,
+} from './amp-auth.js';
+import {
+  cancelCursorLogin,
+  CURSOR_AUTH_PATH,
+  CURSOR_CONFIG_DIR,
+  isCursorAuthenticated,
+  startCursorLogin,
+} from './cursor-auth.js';
+import {
+  cancelCopilotLogin,
+  COPILOT_AUTH_PATH,
+  COPILOT_CONFIG_DIR,
+  COPILOT_GH_HOSTS_PATH,
+  isCopilotAuthenticated,
+  startCopilotLogin,
+} from './copilot-auth.js';
+import {
+  cancelOpencodeLogin,
+  isOpencodeAuthenticated,
+  OPENCODE_AUTH_PATH,
+  OPENCODE_CONFIG_DIR,
+  startOpencodeLogin,
+} from './opencode-auth.js';
+import {
+  cancelDroidLogin,
+  DROID_AUTH_PATH,
+  DROID_CONFIG_DIR,
+  DROID_MCP_PATH,
+  isDroidAuthenticated,
+  startDroidLogin,
+} from './droid-auth.js';
+import {
+  cancelCcrLogin,
+  CCR_CONFIG_DIR,
+  CCR_CONFIG_PATH,
+  isCcrAuthenticated,
+  startCcrLogin,
+} from './ccr-auth.js';
+import {
+  cancelQwenLogin,
+  isQwenAuthenticated,
+  QWEN_CONFIG_DIR,
+  QWEN_INSTALL_PATH,
+  QWEN_SETTINGS_PATH,
+  startQwenLogin,
+} from './qwen-auth.js';
 import {
   cancelCloudLogin,
   clearCloudAuth,
@@ -130,6 +194,7 @@ interface ActiveWorkspace {
   autopilot: AutopilotManager;
   draftIssue: DraftIssueFn;
   suggestIssue: SuggestFeatureFn;
+  draftPrDescription: DraftPrDescriptionFn;
   analyzeSentryError: SentryAnalyzerFn;
   sentryPoller: SentryPoller;
   subscriptions: OwnedSubscriptionRegistry;
@@ -285,6 +350,11 @@ async function recordCloudRecent(entry: Omit<RecentCloudWorkspace, 'lastOpenedAt
 
 function stripHouseRules(config: WorkspaceConfig): WorkspaceConfig {
   const { houseRules: _omit, ...rest } = config;
+  return rest as WorkspaceConfig;
+}
+
+function stripAcpCommand(config: WorkspaceConfig): WorkspaceConfig {
+  const { acpCommand: _omit, ...rest } = config;
   return rest as WorkspaceConfig;
 }
 
@@ -490,6 +560,10 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     houseRules: config.houseRules ?? null,
   };
 
+  const acpCommandState = {
+    acpCommand: config.acpCommand ?? null,
+  };
+
   // Curator runs after every successful agent run on this workspace, distilling
   // events into durable learnings. Cheap by default (Haiku, per-day budget cap)
   // and gracefully no-ops when the run signal isn't `completed_clean`/`promoted`.
@@ -501,6 +575,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     containmentMode,
     defaultRunCostBudgetUsd: () => budgetsState.runCostBudgetUsd,
     houseRules: () => houseRulesState.houseRules,
+    acpCommand: () => acpCommandState.acpCommand,
     onRunStatusChange: async (run) => {
       try {
         await maybeNotifyRunStatus(run, store, source);
@@ -536,6 +611,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
   const supervisor = wrapNotifyingSupervisor(rawSupervisor);
   const draftIssue = createComposer({ cwd: gitRoot });
   const suggestIssue = createSuggester({ cwd: gitRoot });
+  const draftPrDescription = createPrDescriptionDrafter({ cwd: gitRoot });
   const analyzeSentryError = createSentryAnalyzer({ cwd: gitRoot });
 
   // Demote any in-progress / agent-running labels left over from a previous
@@ -547,6 +623,12 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     // best-effort
   });
 
+  // Preview-proxy injection assets are copied next to the compiled main.cjs
+  // at build time (see desktop/tsup.config.ts onSuccess). Hand the absolute
+  // path to the api layer so the dispatcher can serve them at runtime even
+  // though it's bundled into this process.
+  const previewAssetsDir = join(__dirname, 'assets');
+
   const apiConfig =
     config.mode === 'github'
       ? {
@@ -555,6 +637,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
           repo: config.repo,
           repoPath: gitRoot,
           containmentMode,
+          previewAssetsDir,
         }
       : {
           mode: 'local' as const,
@@ -563,6 +646,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
           repoPath: gitRoot,
           authorLogin: config.authorLogin,
           containmentMode,
+          previewAssetsDir,
         };
 
   const cooldownUnsub = supervisor.subscribeCooldown((state) => {
@@ -635,6 +719,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
       supervisor,
       draftIssue,
       suggestIssue,
+      draftPrDescription,
       autopilot,
       analyzeSentryError,
       sentry: sentryRuntime,
@@ -671,6 +756,21 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
             input.houseRules === null
               ? stripHouseRules(config)
               : { ...config, houseRules: input.houseRules };
+          await writeWorkspaceConfig(gitRoot, next);
+          config = next;
+          if (activeWorkspace && activeWorkspace.repoPath === gitRoot) {
+            activeWorkspace.config = next;
+          }
+        },
+      },
+      acpCommand: {
+        get: () => ({ acpCommand: acpCommandState.acpCommand }),
+        set: async (input) => {
+          acpCommandState.acpCommand = input.acpCommand;
+          const next: WorkspaceConfig =
+            input.acpCommand === null
+              ? stripAcpCommand(config)
+              : { ...config, acpCommand: input.acpCommand };
           await writeWorkspaceConfig(gitRoot, next);
           config = next;
           if (activeWorkspace && activeWorkspace.repoPath === gitRoot) {
@@ -722,6 +822,7 @@ async function openWorkspaceInternal(repoPath: string): Promise<ActiveWorkspaceI
     autopilot,
     draftIssue,
     suggestIssue,
+    draftPrDescription,
     analyzeSentryError,
     sentryPoller,
     subscriptions,
@@ -935,6 +1036,11 @@ function registerDeviceChatIpc(): void {
     'chat:delete',
     'chat:post-message',
     'chat:stop-run',
+    'chat:sessions:list',
+    'chat:sessions:create',
+    'chat:sessions:rename',
+    'chat:sessions:delete',
+    'chat:sessions:set-active',
   ];
   for (const channel of channels) {
     ipcMain.handle(
@@ -1050,11 +1156,49 @@ function registerIpc(): void {
       isClaudeAuthenticated(),
       getCloudStatus(),
     ]);
-    // Cheap file/env probe — `codex login status` would shell out and can
-    // take seconds. The deeper check still runs via `kanbots:codex-auth-status`
-    // and via the providers handler once the renderer queries it.
+    // Cheap file/env probes — running each CLI's full status command would
+    // shell out and can take seconds. The deeper checks still run via the
+    // dedicated `kanbots:<agent>-auth-status` channels and via the providers
+    // handler once the renderer queries it.
     const codexAuthed =
       existsSync(CODEX_AUTH_PATH) || Boolean(process.env.OPENAI_API_KEY);
+    const geminiAuthed =
+      existsSync(GEMINI_AUTH_PATH) || Boolean(process.env.GEMINI_API_KEY);
+    const ampAuthed =
+      existsSync(AMP_SETTINGS_PATH) ||
+      existsSync(AMP_AUTH_PATH) ||
+      Boolean(process.env.AMP_API_KEY);
+    const cursorAuthed =
+      existsSync(CURSOR_AUTH_PATH) ||
+      existsSync(CURSOR_CONFIG_DIR) ||
+      Boolean(process.env.CURSOR_API_KEY);
+    const copilotAuthed =
+      existsSync(COPILOT_AUTH_PATH) ||
+      existsSync(COPILOT_CONFIG_DIR) ||
+      existsSync(COPILOT_GH_HOSTS_PATH) ||
+      Boolean(process.env.GITHUB_TOKEN);
+    const opencodeAuthed =
+      existsSync(OPENCODE_AUTH_PATH) ||
+      existsSync(OPENCODE_CONFIG_DIR) ||
+      Boolean(process.env.OPENCODE_AUTH_TOKEN) ||
+      Boolean(process.env.ANTHROPIC_API_KEY) ||
+      Boolean(process.env.OPENAI_API_KEY);
+    const droidAuthed =
+      existsSync(DROID_AUTH_PATH) ||
+      existsSync(DROID_MCP_PATH) ||
+      existsSync(DROID_CONFIG_DIR) ||
+      Boolean(process.env.FACTORY_API_KEY);
+    const ccrAuthed =
+      existsSync(CCR_CONFIG_PATH) ||
+      existsSync(CCR_CONFIG_DIR) ||
+      Boolean(process.env.ANTHROPIC_API_KEY) ||
+      Boolean(process.env.OPENAI_API_KEY);
+    const qwenAuthed =
+      existsSync(QWEN_SETTINGS_PATH) ||
+      existsSync(QWEN_INSTALL_PATH) ||
+      existsSync(QWEN_CONFIG_DIR) ||
+      Boolean(process.env.DASHSCOPE_API_KEY) ||
+      Boolean(process.env.QWEN_API_KEY);
     return {
       workspace: activeWorkspaceInfo(),
       cloudWorkspace: activeCloudWorkspace,
@@ -1062,6 +1206,14 @@ function registerIpc(): void {
       cloudRecents,
       claudeAuthed,
       codexAuthed,
+      geminiAuthed,
+      ampAuthed,
+      cursorAuthed,
+      copilotAuthed,
+      opencodeAuthed,
+      droidAuthed,
+      ccrAuthed,
+      qwenAuthed,
       cloudAuthed: cloudStatus.authed,
       cloudPromptDismissed: cloudStatus.promptDismissed,
     };
@@ -1095,6 +1247,126 @@ function registerIpc(): void {
 
   ipcMain.handle('kanbots:codex-login-cancel', async (): Promise<void> => {
     cancelCodexLogin();
+  });
+
+  ipcMain.handle('kanbots:gemini-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isGeminiAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:gemini-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startGeminiLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:gemini-login-cancel', async (): Promise<void> => {
+    cancelGeminiLogin();
+  });
+
+  ipcMain.handle('kanbots:amp-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isAmpAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:amp-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startAmpLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:amp-login-cancel', async (): Promise<void> => {
+    cancelAmpLogin();
+  });
+
+  ipcMain.handle('kanbots:cursor-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isCursorAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:cursor-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startCursorLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:cursor-login-cancel', async (): Promise<void> => {
+    cancelCursorLogin();
+  });
+
+  ipcMain.handle('kanbots:copilot-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isCopilotAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:copilot-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startCopilotLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:copilot-login-cancel', async (): Promise<void> => {
+    cancelCopilotLogin();
+  });
+
+  ipcMain.handle('kanbots:opencode-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isOpencodeAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:opencode-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startOpencodeLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:opencode-login-cancel', async (): Promise<void> => {
+    cancelOpencodeLogin();
+  });
+
+  ipcMain.handle('kanbots:droid-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isDroidAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:droid-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startDroidLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:droid-login-cancel', async (): Promise<void> => {
+    cancelDroidLogin();
+  });
+
+  ipcMain.handle('kanbots:ccr-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isCcrAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:ccr-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startCcrLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:ccr-login-cancel', async (): Promise<void> => {
+    cancelCcrLogin();
+  });
+
+  ipcMain.handle('kanbots:qwen-auth-status', async (): Promise<{ authed: boolean }> => {
+    return { authed: await isQwenAuthenticated() };
+  });
+
+  ipcMain.handle(
+    'kanbots:qwen-login-start',
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      return startQwenLogin();
+    },
+  );
+
+  ipcMain.handle('kanbots:qwen-login-cancel', async (): Promise<void> => {
+    cancelQwenLogin();
   });
 
   ipcMain.handle('kanbots:cloud-auth-status', async (): Promise<CloudStatus> => {
@@ -1413,7 +1685,18 @@ function registerIpc(): void {
         prompt: string;
         appendSystemPrompt?: string;
         model?: string;
-        provider?: 'claude-code' | 'codex-cli';
+        provider?:
+          | 'claude-code'
+          | 'codex-cli'
+          | 'gemini-cli'
+          | 'amp-cli'
+          | 'cursor-cli'
+          | 'copilot-cli'
+          | 'opencode-cli'
+          | 'droid-cli'
+          | 'ccr-cli'
+          | 'qwen-cli'
+          | 'acp';
       },
     ): Promise<{ runId: string }> => {
       if (activeCloudWorkspace === null) {
@@ -1748,6 +2031,10 @@ async function createChatWindow(conversationId: number | null): Promise<BrowserW
     },
   });
   chatWindows.add(win);
+  // Cache the webContents id at creation time — by the time `closed`
+  // fires the webContents is already destroyed, so `win.webContents.id`
+  // throws "Object has been destroyed" (Electron quirk).
+  const ownerWebContentsId = win.webContents.id;
   win.on('closed', () => {
     chatWindows.delete(win);
     // Workspace-scoped subscription registry only exists when a local
@@ -1755,7 +2042,7 @@ async function createChatWindow(conversationId: number | null): Promise<BrowserW
     // agent-run streams (if any) come from the device chat path and
     // there's nothing to release here.
     if (activeWorkspace) {
-      activeWorkspace.subscriptions.closeAllForOwner(win.webContents.id);
+      activeWorkspace.subscriptions.closeAllForOwner(ownerWebContentsId);
     }
   });
 

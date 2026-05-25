@@ -13,6 +13,8 @@ import type {
   ThreadPayload,
 } from '@kanbots/api';
 
+export type { IssueRelationPayload } from '@kanbots/api';
+
 export type {
   AgentCheck,
   AgentEvent,
@@ -33,10 +35,13 @@ export type {
   AutopilotStatus,
   Card,
   CardStatus,
+  CardTemplatePayload,
   CardType,
   ChatConversation,
   ChatPayload,
   ChatPostMessageResult,
+  ChatSessionPayload,
+  ChatSessionStatus,
   CheckKind,
   Comment,
   Config,
@@ -47,8 +52,11 @@ export type {
   DiffFileStatus,
   DiffPayload,
   DraftedIssue,
+  DraftedPrDescription,
   Message,
   PendingDecisionPayload,
+  PrCommentPayload,
+  PrCommentsListResult,
   ProviderConfigPayload,
   ProviderId,
   ProviderSaveInput,
@@ -76,9 +84,12 @@ export type {
   StatusKey,
   UpdateIssuePatch,
   Workspace,
+  WorkspaceAcpCommandBridgePayload,
   WorkspaceBudgets,
   WorkspaceFolderPayload,
   WorkspaceHouseRules,
+  WorkspaceRepoPayload,
+  WorkspaceRepoStatus,
   WorkspaceScriptsBridgePayload,
   WorkspaceRunScriptResult,
 } from '@kanbots/api';

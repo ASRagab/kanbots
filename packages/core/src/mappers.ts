@@ -1,4 +1,11 @@
-import type { Comment, Issue, IssueState, PullRequest, User } from './types.js';
+import type {
+  Comment,
+  Issue,
+  IssueState,
+  PullRequest,
+  PullRequestReviewComment,
+  User,
+} from './types.js';
 
 interface RawUser {
   login?: string;
@@ -48,6 +55,19 @@ export interface RawPullRequest {
   base: { ref: string };
 }
 
+export interface RawPullRequestReviewComment {
+  id: number;
+  body?: string | null;
+  user: RawUser | null;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  path: string;
+  line?: number | null;
+  original_line?: number | null;
+  side?: string | null;
+}
+
 function rawUser(raw: RawUser | null): User {
   return {
     login: raw?.login ?? 'unknown',
@@ -91,6 +111,30 @@ export function rawCommentToComment(raw: RawComment): Comment {
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
     htmlUrl: raw.html_url,
+  };
+}
+
+export function rawReviewCommentToReviewComment(
+  raw: RawPullRequestReviewComment,
+): PullRequestReviewComment {
+  // Prefer the new-side line number (matches what shows in the diff for
+  // current code); fall back to the old-side number for comments anchored
+  // on lines that only exist pre-change. GitHub returns `null` for both
+  // on "outdated" comments whose diff position no longer maps cleanly —
+  // we surface `null` so the UI can degrade gracefully.
+  const line = raw.line ?? raw.original_line ?? null;
+  let side: 'LEFT' | 'RIGHT' | null = null;
+  if (raw.side === 'LEFT' || raw.side === 'RIGHT') side = raw.side;
+  return {
+    id: raw.id,
+    body: raw.body ?? '',
+    user: rawUser(raw.user),
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    htmlUrl: raw.html_url,
+    path: raw.path,
+    line,
+    side,
   };
 }
 

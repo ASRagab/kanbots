@@ -37,7 +37,18 @@ const CARD_STATUS_TO_ENTRY_STATUS: Record<CardSummary['status'], SuggestFeatureE
 
 interface SuggestArgs {
   personaPrompt: string;
-  provider?: 'claude-code' | 'codex-cli';
+  provider?:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp';
   userNotes?: string;
 }
 

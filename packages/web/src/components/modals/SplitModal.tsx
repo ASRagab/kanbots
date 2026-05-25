@@ -1,6 +1,7 @@
 import { Logo } from '../Logo.js';
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api.js';
+import { useFocusedRepo } from '../../hooks/useFocusedRepo.js';
 import { dispatchIssuesRefetch } from '../../hooks/useIssues.js';
 import type { Issue } from '../../types.js';
 
@@ -24,6 +25,7 @@ export function SplitModal({ parentNumber, parentTitle, onClose, onSplit }: Spli
   const [dispatchAgents, setDispatchAgents] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { focusedRepoId } = useFocusedRepo();
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent): void {
@@ -61,7 +63,10 @@ export function SplitModal({ parentNumber, parentTitle, onClose, onSplit }: Spli
           title: d.title.trim(),
           ...(d.body.trim() ? { body: d.body.trim() } : {}),
         })),
-        { dispatch: dispatchAgents },
+        {
+          dispatch: dispatchAgents,
+          ...(dispatchAgents && focusedRepoId !== null ? { repoId: focusedRepoId } : {}),
+        },
       );
       dispatchIssuesRefetch();
       onSplit?.(result.children);

@@ -8,9 +8,11 @@ import {
   rawCommentToComment,
   rawIssueToIssue,
   rawPullToPullRequest,
+  rawReviewCommentToReviewComment,
   type RawComment,
   type RawIssue,
   type RawPullRequest,
+  type RawPullRequestReviewComment,
 } from './mappers.js';
 import type {
   Comment,
@@ -18,6 +20,7 @@ import type {
   Issue,
   OpenPRInput,
   PullRequest,
+  PullRequestReviewComment,
   Repo,
   UpdateIssuePatch,
 } from './types.js';
@@ -233,6 +236,41 @@ export class GitHubClient implements IssueSource {
       if (isRequestError(err) && err.status === 404) return false;
       throw err;
     }
+  }
+
+  async findOpenPullForBranch(branch: string): Promise<PullRequest | null> {
+    // GitHub's `head` filter requires the `owner:branch` form to scope
+    // to a specific repo's branch (PRs from forks include a different
+    // owner). Listing in `all` state means a recently-merged PR still
+    // surfaces — useful for the issue thread, which keeps showing the
+    // PR review section after merge.
+    const { data } = await this.octokit.request('GET /repos/{owner}/{repo}/pulls', {
+      owner: this.owner,
+      repo: this.repo,
+      head: `${this.owner}:${branch}`,
+      state: 'all',
+      per_page: 1,
+      sort: 'created',
+      direction: 'desc',
+    });
+    const list = data as RawPullRequest[];
+    if (list.length === 0) return null;
+    return rawPullToPullRequest(list[0]!);
+  }
+
+  async listPullReviewComments(
+    pullNumber: number,
+  ): Promise<PullRequestReviewComment[]> {
+    const data = (await this.octokit.paginate(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}/comments',
+      {
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: pullNumber,
+        per_page: 100,
+      },
+    )) as RawPullRequestReviewComment[];
+    return data.map(rawReviewCommentToReviewComment);
   }
 
   async openDraftPR(input: OpenPRInput): Promise<PullRequest> {
