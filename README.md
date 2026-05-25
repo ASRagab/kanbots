@@ -4,11 +4,12 @@
 
 # kanbots
 
-> **A kanban board that runs Claude Code and Codex agents in parallel.**
-> Drop a folder. Get a board. Dispatch agents on every card — at the
-> same time, each in its own worktree. Or hit autopilot and let them
-> split tasks, run them in parallel slots, and check their own work
-> while you sleep.
+> **A kanban board that runs 11 agent CLIs in parallel.**
+> Claude Code, Codex, Gemini, Cursor, Copilot, Amp, OpenCode, Droid,
+> CCR, Qwen, plus any ACP-compatible CLI. Drop a folder. Get a board.
+> Dispatch agents on every card — at the same time, each in its own
+> worktree. Or hit autopilot and let them split tasks, run them in
+> parallel slots, and check their own work while you sleep.
 
 ![Kanbots board overview](docs/assets/board-overview.png)
 
@@ -19,8 +20,10 @@
   as `status:*` label edits.
 - **Local-first issues** by default — stored in SQLite. Switch to
   GitHub mode to drive real issues on a repo.
-- **Claude Code or Codex agents** per run, isolated in per-run
-  worktrees. A pre-push hook prevents agents from pushing.
+- **11 agent CLIs supported** — Claude Code, Codex, Gemini, Cursor,
+  Copilot, Amp, OpenCode, Droid, CCR, Qwen, plus any ACP-compatible
+  CLI. Each run is isolated in a per-run worktree; a pre-push hook
+  prevents agents from pushing.
 - **Live agent thread** — every `tool_use`/`tool_result` streams in.
   Decision prompts pop into the UI; click an option, the run
   continues.
@@ -33,6 +36,28 @@
 - **MCP server** — `kanbots-mcp-server` exposes the board over Model
   Context Protocol so Cursor, Claude Desktop, or anything MCP-aware
   can drive it.
+
+## Supported agents
+
+Pick the CLI per dispatch from the New Task modal. Each one reuses
+its own auth (you don't sign into kanbots — kanbots calls the CLI
+that's already on your `PATH`).
+
+| Provider | CLI binary | Sign-in |
+| --- | --- | --- |
+| Claude Code | `claude` | `claude /login` |
+| Codex | `codex` | `codex login` or `OPENAI_API_KEY` |
+| Gemini | `gemini` | `gemini auth` |
+| Cursor CLI | `cursor-agent` | `cursor-agent login` |
+| GitHub Copilot CLI | `gh-copilot` | `gh auth login` (needs Copilot subscription) |
+| Amp | `amp` | `amp login` |
+| OpenCode | `opencode` | `opencode auth` |
+| Droid | `droid` | `droid auth` (Factory account) |
+| CCR (Claude Code Router) | `ccr` | reuses Claude Code auth + routes to alternative models |
+| Qwen Code | `qwen` | `qwen auth` |
+| **Any ACP-compatible CLI** | (your binary) | per CLI — kanbots speaks the Agent Client Protocol over stdio |
+
+Install the ones you want on your `PATH`. You only need at least one.
 
 ## Getting started
 
@@ -86,10 +111,11 @@ pnpm desktop          # build everything, open Electron
 pnpm desktop:dev      # Vite + tsup --watch + electronmon
 ```
 
-You'll need **Node 20+**, **pnpm 10+**, **git**, and `claude` (the
-Claude Code CLI) on `PATH`. Sign in once with `claude /login`. Add
-`codex` on PATH if you want Codex agents, and `gh` + `gh auth login`
-if you'll be driving GitHub issues.
+You'll need **Node 20+**, **pnpm 10+**, **git**, and at least one of
+the supported agent CLIs on your `PATH` (see [Supported
+agents](#supported-agents) above — `claude`, `codex`, `gemini`,
+`cursor-agent`, etc.). Add `gh` + `gh auth login` if you'll be
+driving GitHub issues.
 
 ### First run
 
@@ -174,7 +200,7 @@ Details: [docs/agents.md#autopilot](docs/agents.md#autopilot).
 | Topic | What's there |
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Install, first run, picking a workspace |
-| [Agents](docs/agents.md) | Claude Code & Codex runs, decision prompts, containment, costs, autopilot, personas |
+| [Agents](docs/agents.md) | All 11 agent CLI runs, decision prompts, containment, costs, autopilot, personas |
 | [Providers](docs/providers.md) | AI providers modal — picking the agent CLI, API key storage |
 | [Issues](docs/issues.md) | Local mode, GitHub mode, auth, Sentry import |
 | [MCP server](docs/mcp-server.md) | Wiring `kanbots-mcp-server` into Cursor or Claude Desktop |
@@ -187,7 +213,7 @@ Details: [docs/agents.md#autopilot](docs/agents.md#autopilot).
 | --- | --- |
 | [`@kanbots/core`](packages/core) | Domain types, GitHub client, `IssueSource` contract |
 | [`@kanbots/local-store`](packages/local-store) | SQLite schema, migrations, repos, `LocalIssueSource` |
-| [`@kanbots/dispatcher`](packages/dispatcher) | Agent runtime — spawns Claude Code / Codex, parses stream-json, manages worktrees |
+| [`@kanbots/dispatcher`](packages/dispatcher) | Agent runtime — spawns the configured agent CLI, parses its stream output, manages worktrees |
 | [`@kanbots/llm`](packages/llm) | CLI adapters and provider catalogue |
 | [`@kanbots/api`](packages/api) | Pure handler library + agent supervisor (no HTTP server) |
 | [`@kanbots/mcp`](packages/mcp) | MCP server (`kanbots-mcp-server` bin) |
