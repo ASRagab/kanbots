@@ -18,7 +18,19 @@ Your job is to read the diff already in this worktree and produce a focused revi
    commit. Do NOT spawn checks.
 5. End your turn after the review.`;
 
-const PROVIDER_ENUM = z.enum(['claude-code', 'codex-cli']);
+const PROVIDER_ENUM = z.enum([
+  'claude-code',
+  'codex-cli',
+  'gemini-cli',
+  'amp-cli',
+  'cursor-cli',
+  'copilot-cli',
+  'opencode-cli',
+  'droid-cli',
+  'ccr-cli',
+  'qwen-cli',
+  'acp',
+]);
 
 const startAgentSchema = z
   .object({
@@ -28,6 +40,7 @@ const startAgentSchema = z
     appendSystemPrompt: z.string().max(20_000).optional(),
     model: z.string().min(1).max(120).optional(),
     provider: PROVIDER_ENUM.optional(),
+    repoId: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -52,6 +65,7 @@ const splitSchema = z
       .min(1)
       .max(8),
     dispatch: z.boolean().optional(),
+    repoId: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -61,6 +75,7 @@ const reviewerSchema = z
     threadId: z.number().int().positive().optional(),
     prompt: z.string().min(1).max(20_000).optional(),
     model: z.string().min(1).max(120).optional(),
+    repoId: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -70,7 +85,19 @@ export interface StartAgentArgs {
   prompt: string;
   appendSystemPrompt?: string;
   model?: string;
-  provider?: 'claude-code' | 'codex-cli';
+  provider?:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp';
+  repoId?: number;
 }
 
 export interface NumberArgs {
@@ -81,6 +108,7 @@ export interface SplitArgs {
   number: number;
   subtasks: Array<{ title: string; body?: string }>;
   dispatch?: boolean;
+  repoId?: number;
 }
 
 export interface ReviewerArgs {
@@ -88,6 +116,7 @@ export interface ReviewerArgs {
   threadId?: number;
   prompt?: string;
   model?: string;
+  repoId?: number;
 }
 
 export async function startAgent(
@@ -104,6 +133,7 @@ export async function startAgent(
       : {}),
     ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+    ...(parsed.repoId !== undefined ? { repoId: parsed.repoId } : {}),
   });
 }
 
@@ -229,6 +259,7 @@ export async function split(
           threadId: thread.id,
           issueNumber: child.number,
           prompt: sub.body ?? sub.title,
+          ...(parsed.repoId !== undefined ? { repoId: parsed.repoId } : {}),
         });
       } catch {
         // Surfaced via run rows; child issue still created.
@@ -268,6 +299,7 @@ export async function reviewer(
     prompt: reviewerPrompt,
     appendSystemPrompt: REVIEWER_SYSTEM_PROMPT,
     ...(parsed.model ? { model: parsed.model } : {}),
+    ...(parsed.repoId !== undefined ? { repoId: parsed.repoId } : {}),
   });
 }
 

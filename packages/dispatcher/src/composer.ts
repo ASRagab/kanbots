@@ -4,7 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-export type SuggesterProvider = 'claude-code' | 'codex-cli';
+export type SuggesterProvider =
+  | 'claude-code'
+  | 'codex-cli'
+  | 'gemini-cli'
+  | 'amp-cli'
+  | 'cursor-cli'
+  | 'copilot-cli'
+  | 'opencode-cli'
+  | 'droid-cli'
+  | 'ccr-cli'
+  | 'qwen-cli'
+  | 'acp';
 
 export interface DraftIssueInput {
   description: string;
@@ -71,6 +82,28 @@ export type SpawnFn = (
 
 export type DraftIssueFn = (input: DraftIssueInput) => Promise<DraftedIssue>;
 export type SuggestFeatureFn = (input: SuggestFeatureInput) => Promise<DraftedIssue>;
+
+/**
+ * Input for drafting an AI-generated pull-request description from a git
+ * diff. Used by the `agent-runs:draft-pr-description` handler to pre-fill
+ * the title/body before the user opens the draft PR — it is NOT used to
+ * auto-submit. Callers MUST truncate `diff` themselves before passing it
+ * in; the drafter does not re-trim.
+ */
+export interface DraftPrDescriptionInput {
+  /** Issue title for context — keeps the title generation grounded. */
+  issueTitle: string;
+  /** Issue body for context — optional; may be empty. */
+  issueBody?: string;
+  /** Git diff text (already truncated to a sane budget by the caller). */
+  diff: string;
+  /** Whether the diff was truncated. The model is told so it can hedge. */
+  diffTruncated?: boolean;
+}
+
+export type DraftPrDescriptionFn = (
+  input: DraftPrDescriptionInput,
+) => Promise<DraftedIssue>;
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 // Ideation does Glob/Grep/Read across the repo and a verify pass before
@@ -350,6 +383,58 @@ export function createComposer(opts: CreateComposerOptions): DraftIssueFn {
   };
 }
 
+const DEFAULT_PR_DESCRIPTION_SYSTEM_PROMPT = `You are a senior engineer drafting a pull-request description from a git diff.
+
+The user gives you the issue title, the issue body, and the diff. Produce a single well-structured PR description — both a concise title and a markdown body — that a reviewer can act on.
+
+Rules:
+- Title: a single line, imperative mood, ≤80 chars, no trailing punctuation. No markdown. Describe what the PR does, not what the issue asked for.
+- Body: markdown. Four sections, each a level-3 heading in this exact order:
+  1. \`### Summary\` — one short paragraph (~2-3 sentences) framing the change.
+  2. \`### Changes\` — bullet list of the concrete edits, grouped by area when useful (file paths welcome).
+  3. \`### Why\` — brief rationale tying the change back to the issue.
+  4. \`### Test plan\` — checkbox list (\`- [ ]\`) of what a reviewer should verify before merging.
+- Be specific and factual. Reference real file paths and symbols from the diff. Do NOT invent files that aren't in the diff.
+- Total body length should be roughly 100-200 words. Resist filler.
+- If the diff was truncated, say so in the Summary with one short sentence (e.g. "Diff truncated for length — focus areas summarized below.").
+- Output strictly the JSON object matching the schema. No prose outside the JSON.
+`;
+
+export interface CreatePrDescriptionDrafterOptions extends CreateComposerOptions {}
+
+export function createPrDescriptionDrafter(
+  opts: CreatePrDescriptionDrafterOptions,
+): DraftPrDescriptionFn {
+  const command = opts.command ?? 'claude';
+  const cwd = opts.cwd;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const systemPrompt = opts.systemPrompt ?? DEFAULT_PR_DESCRIPTION_SYSTEM_PROMPT;
+  const spawn = opts.spawn ?? nodeSpawn;
+
+  return async function draftPrDescription(
+    input: DraftPrDescriptionInput,
+  ): Promise<DraftedIssue> {
+    const truncatedNote = input.diffTruncated
+      ? '\n\nNote: the diff below was truncated to keep the prompt within token limits. Summarize what you can see and hedge accordingly.'
+      : '';
+    const issueBody = (input.issueBody ?? '').trim();
+    const bodyBlock = issueBody.length > 0 ? `\n\n### Issue body\n${issueBody}` : '';
+    const stdin =
+      `### Issue title\n${input.issueTitle.trim()}` +
+      bodyBlock +
+      `\n\n### Diff\n${input.diff}` +
+      truncatedNote;
+    return runClaudeForDraftedIssue({
+      command,
+      cwd,
+      timeoutMs,
+      systemPrompt,
+      stdin,
+      spawn,
+    });
+  };
+}
+
 export function createSuggester(opts: CreateSuggesterOptions): SuggestFeatureFn {
   const claudeCommand = opts.command ?? 'claude';
   const codexCommand = opts.codexCommand ?? 'codex';
@@ -375,6 +460,11 @@ export function createSuggester(opts: CreateSuggesterOptions): SuggestFeatureFn 
       if (input.onEvent) codexOpts.onEvent = input.onEvent;
       return runCodexForDraftedIssue(codexOpts);
     }
+    // gemini-cli and amp-cli don't have a dedicated issue-drafting runner
+    // yet — their stream parsers exist but the structured-JSON drafting
+    // helper is claude-specific. Fall back to claude for `composer:suggest`
+    // (a separate, non-agent-run path); their agent-run flows go through
+    // the dispatcher's worker.ts and are unaffected.
     const runOpts: RunClaudeOptions = {
       command: claudeCommand,
       cwd,

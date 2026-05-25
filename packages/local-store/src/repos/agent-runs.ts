@@ -3,6 +3,7 @@ import type {
   AgentRun,
   AgentRunId,
   AgentRunStatus,
+  ChatSessionId,
   PreviewState,
   SuccessSignal,
   ThreadId,
@@ -35,6 +36,11 @@ interface AgentRunRow {
   card_size_bucket: string | null;
   issue_body_chars: number | null;
   success_signal: string | null;
+  // The chat-session FK added in migration 0027. Distinct from
+  // `session_id` above — that one is the dispatcher's stream-resume token.
+  // Renaming was rejected (the dispatcher resume path reads `session_id`
+  // by name), so the chat-session FK lives under its own column.
+  chat_session_id: number | null;
 }
 
 function rowToAgentRun(row: AgentRunRow): AgentRun {
@@ -65,6 +71,7 @@ function rowToAgentRun(row: AgentRunRow): AgentRun {
     cardSizeBucket: row.card_size_bucket,
     issueBodyChars: row.issue_body_chars,
     successSignal: (row.success_signal as SuccessSignal | null) ?? null,
+    chatSessionId: row.chat_session_id,
   };
 }
 
@@ -73,6 +80,8 @@ export interface CreateAgentRunInput {
   status?: AgentRunStatus;
   worktreePath?: string;
   branchName?: string;
+  /** Chat-session scope for runs that belong to a multi-session chat. */
+  chatSessionId?: ChatSessionId | null;
 }
 
 export interface UpdateAgentRunPatch {
@@ -99,6 +108,7 @@ export interface UpdateAgentRunPatch {
   cardSizeBucket?: string | null;
   issueBodyChars?: number | null;
   successSignal?: SuccessSignal | null;
+  chatSessionId?: ChatSessionId | null;
 }
 
 const PATCH_COLUMNS: Record<keyof UpdateAgentRunPatch, string> = {
@@ -125,6 +135,7 @@ const PATCH_COLUMNS: Record<keyof UpdateAgentRunPatch, string> = {
   cardSizeBucket: 'card_size_bucket',
   issueBodyChars: 'issue_body_chars',
   successSignal: 'success_signal',
+  chatSessionId: 'chat_session_id',
 };
 
 const ACTIVE_STATUSES = "('starting', 'running', 'awaiting_input')";
@@ -137,13 +148,15 @@ export class AgentRunsRepo {
     const status = input.status ?? 'starting';
     const worktreePath = input.worktreePath ?? null;
     const branchName = input.branchName ?? null;
+    const chatSessionId = input.chatSessionId ?? null;
 
     const result = this.db
       .prepare(
-        `INSERT INTO agent_runs (thread_id, status, started_at, worktree_path, branch_name, success_signal)
-         VALUES (?, ?, ?, ?, ?, 'pending')`,
+        `INSERT INTO agent_runs
+           (thread_id, status, started_at, worktree_path, branch_name, success_signal, chat_session_id)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
       )
-      .run(input.threadId, status, startedAt, worktreePath, branchName);
+      .run(input.threadId, status, startedAt, worktreePath, branchName, chatSessionId);
 
     return {
       id: Number(result.lastInsertRowid),
@@ -172,6 +185,7 @@ export class AgentRunsRepo {
       cardSizeBucket: null,
       issueBodyChars: null,
       successSignal: 'pending',
+      chatSessionId,
     };
   }
 
@@ -246,6 +260,25 @@ export class AgentRunsRepo {
     const row = this.db
       .prepare('SELECT * FROM agent_runs WHERE thread_id = ? ORDER BY id DESC LIMIT 1')
       .get(threadId) as AgentRunRow | undefined;
+    return row ? rowToAgentRun(row) : null;
+  }
+
+  findActiveForChatSession(chatSessionId: ChatSessionId): AgentRun | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM agent_runs WHERE chat_session_id = ? AND status IN ${ACTIVE_STATUSES}
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(chatSessionId) as AgentRunRow | undefined;
+    return row ? rowToAgentRun(row) : null;
+  }
+
+  findLatestForChatSession(chatSessionId: ChatSessionId): AgentRun | null {
+    const row = this.db
+      .prepare(
+        'SELECT * FROM agent_runs WHERE chat_session_id = ? ORDER BY id DESC LIMIT 1',
+      )
+      .get(chatSessionId) as AgentRunRow | undefined;
     return row ? rowToAgentRun(row) : null;
   }
 

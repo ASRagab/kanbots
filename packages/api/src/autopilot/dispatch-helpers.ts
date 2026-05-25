@@ -11,7 +11,18 @@ export interface DispatchAutopilotChildArgs {
   issue: Pick<Issue, 'number' | 'title' | 'body' | 'labels'>;
   threadId: number;
   model?: string;
-  provider?: 'claude-code' | 'codex-cli';
+  provider?:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp';
   effort?: AutopilotEffort;
   /** Persona id (not the display name) — recorded on the agent run for
    *  per-persona analytics. */

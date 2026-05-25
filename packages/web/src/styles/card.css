@@ -101,6 +101,73 @@
   border: 1px solid var(--hairline);
   border-radius: 4px;
   margin-left: 4px;
+  background: transparent;
+  line-height: 1;
+}
+/* On a primary (accent-fill) button the default ink-3 / hairline kbd
+   becomes a low-contrast yellowish chip against the orange. Tint the kbd
+   to use the accent ink (dark) over a slightly inset translucent surface
+   so it reads as a key-cap, not a mystery badge. */
+.kb-btn.primary .kb-kbd {
+  color: var(--accent-ink);
+  background: oklch(1 0 0 / 0.18);
+  border-color: oklch(0 0 0 / 0.18);
+}
+
+/* Workspace cost meter — lives in the board toolbar between the search
+   pill and the Autopilot button. Mirrors the kb-btn shape but renders
+   the rolled-up "$X.XX today" figure as content, and lights up in the
+   clay accent once spend has accumulated. */
+.kb-cost-meter {
+  display: inline-flex;
+  /* center-aligned with consistent line-height — baseline + mixed font
+     sizes drifted the suffix off the dollar amount. */
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink-1);
+  font-family: var(--ff-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  cursor: default;
+  transition: 120ms ease;
+  line-height: 1;
+}
+.kb-cost-meter.is-clickable {
+  cursor: pointer;
+}
+.kb-cost-meter.is-clickable:hover {
+  background: var(--bg-3);
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+.kb-cost-meter.is-empty,
+.kb-cost-meter.is-zero {
+  color: var(--ink-3);
+}
+.kb-cost-meter:not(.is-empty):not(.is-zero) .kb-cost-meter-amount {
+  color: var(--accent);
+  font-weight: 600;
+}
+.kb-cost-meter-amount {
+  font-weight: 500;
+  line-height: 1;
+}
+.kb-cost-meter-suffix {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+  line-height: 1;
+  /* tiny optical lift so the lowercase x-height sits on the dollar-sign
+     midline rather than dropping to its baseline. */
+  position: relative;
+  top: 0.5px;
 }
 
 .kb-search {
@@ -544,13 +611,15 @@
 .kb-card:hover {
   background: var(--bg-2);
   border-color: var(--ink-4);
-  transform: translateY(-1px);
 }
 .kb-card.kb-card-selected {
-  background: color-mix(in oklch, var(--bg-2) 80%, var(--accent-soft));
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  box-shadow: 0 8px 24px oklch(0 0 0 / 0.3);
+  background: color-mix(in oklch, var(--bg-2) 88%, var(--accent-soft));
+  border-color: var(--accent-line);
+  /* Soft accent ring instead of a hard 2px solid outline — keeps the
+     selected state legible without shouting at the eye. */
+  box-shadow:
+    0 0 0 1px var(--accent-line),
+    0 8px 24px oklch(0 0 0 / 0.3);
 }
 .kb-card.kb-card-source {
   opacity: 0.4;
@@ -939,6 +1008,44 @@
   font-size: 11px;
 }
 
+/* Decision-option buttons on a card. Mirrors the tray's `.kb-tray-opts .o`
+   vocabulary — neutral surface + thin border instead of the orange accent
+   fill the generic `.kb-btn primary` would give. The decision needs to
+   read as "make a choice", not "press the primary CTA". */
+.kb-card-decision-opts {
+  gap: 4px;
+}
+.kb-card-decision-opts .o {
+  appearance: none;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-family: var(--ff-sans);
+  background: var(--bg-2);
+  border: 1px solid var(--hairline);
+  color: var(--ink-1);
+  cursor: pointer;
+  text-align: left;
+}
+.kb-card-decision-opts .o:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--awaiting);
+  color: var(--awaiting);
+}
+.kb-card-decision-opts .o:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.kb-card-decision-opts .o.dismiss {
+  color: var(--ink-3);
+  border-style: dashed;
+}
+.kb-card-decision-opts .o.dismiss:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--failed);
+  color: var(--failed);
+}
+
 /* Ship-from-review panel */
 .kb-ship-panel {
   display: flex;
@@ -1006,4 +1113,277 @@
 .kb-sentry-badge.kb-sentry-upstream_resolved {
   background: rgba(21, 128, 61, 0.15);
   color: #15803d;
+}
+
+/* Multi-select bulk action ring on cards. Visually distinct from the
+   single-select kb-card-selected ring so the two states can coexist. */
+.kb-card.is-selected {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: -2px;
+  background: color-mix(in oklch, var(--bg-2) 70%, var(--accent-soft));
+}
+.kb-card.kb-card-selected.is-selected {
+  outline: 2px solid var(--accent);
+}
+
+/* Saved board views dropdown — sits in the filter row next to Sort. */
+.kb-board-views {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.kb-board-views-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 220px;
+  background: var(--bg-1);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: var(--shadow-2);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kb-board-views-item {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-1);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.kb-board-views-item:hover {
+  background: var(--bg-2);
+}
+.kb-board-views-item.on {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.kb-board-views-sep {
+  height: 1px;
+  background: var(--hairline-soft);
+  margin: 4px 2px;
+}
+.kb-board-views-empty {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.kb-board-views-save-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+.kb-board-views-save-row .kb-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.kb-board-views-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kb-board-views-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+.kb-board-views-row.is-dragging {
+  opacity: 0.4;
+}
+.kb-board-views-row-handle {
+  color: var(--ink-3);
+  font-family: var(--ff-mono);
+  cursor: grab;
+}
+.kb-board-views-row-name {
+  background: transparent;
+  border: none;
+  color: var(--ink-1);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  flex: 1;
+}
+.kb-board-views-row-name:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+/* Bulk action bar — sticky bottom strip that animates in when the
+   user multi-selects. Mirrors the kb-btn / kb-pill aesthetic without
+   adding a new dependency. */
+.kb-bulk-action-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  box-shadow: var(--shadow-2);
+  animation: kb-bulk-slide-up 160ms ease;
+}
+@keyframes kb-bulk-slide-up {
+  from {
+    transform: translate(-50%, 20px);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+.kb-bulk-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.kb-bulk-spacer {
+  width: 1px;
+  height: 18px;
+  background: var(--hairline-soft);
+  margin: 0 4px;
+}
+.kb-bulk-drop {
+  position: relative;
+}
+.kb-bulk-drop-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  min-width: 180px;
+  background: var(--bg-1);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: var(--shadow-2);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kb-bulk-drop-menu-labels {
+  min-width: 280px;
+  padding: 10px;
+  gap: 8px;
+}
+.kb-bulk-drop-item {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-1);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.kb-bulk-drop-item:hover {
+  background: var(--bg-2);
+}
+.kb-bulk-drop-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.kb-bulk-drop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Card-template settings list — used by CardTemplatesSettingsModal. */
+.kb-card-templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kb-card-template-row {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg-2);
+  padding: 10px 12px;
+}
+.kb-card-template-row.is-dragging {
+  opacity: 0.5;
+}
+.kb-card-template-row.is-editing {
+  background: var(--bg-1);
+  border-color: var(--accent-line);
+}
+.kb-card-template-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.kb-card-template-handle {
+  color: var(--ink-3);
+  font-family: var(--ff-mono);
+  cursor: grab;
+  font-size: 12px;
+}
+.kb-card-template-summary-text {
+  flex: 1;
+  min-width: 0;
+}
+.kb-card-template-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ink);
+}
+.kb-card-template-preview {
+  font-family: var(--ff-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-card-template-tags {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.kb-card-template-tag,
+.kb-card-template-provider {
+  font-family: var(--ff-mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--ink-2);
+}
+.kb-card-template-provider {
+  background: var(--accent-soft);
+  color: var(--ink-1);
+}
+.kb-card-template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kb-card-template-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
 }

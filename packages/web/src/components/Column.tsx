@@ -1,7 +1,7 @@
 import { useDroppable } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
 import type { Issue, StatusKey } from '../types.js';
-import { Card } from './Card.js';
+import { Card, type CardSelectModifiers } from './Card.js';
 import type { RunLiveMap } from '../hooks/useBoardAgentStreams.js';
 
 export function columnDropId(key: StatusKey | null): string {
@@ -46,8 +46,10 @@ export interface ColumnProps {
   label: string;
   issues: Issue[];
   selectedNumber?: number | null;
+  /** Numbers of cards that are currently part of the bulk selection. */
+  multiSelected?: ReadonlySet<number>;
   liveByRun?: RunLiveMap;
-  onSelect?: (n: number) => void;
+  onSelect?: (n: number, modifiers: CardSelectModifiers) => void;
   onOpen?: (n: number) => void;
   onAdd?: (status: StatusKey | null) => void;
   onSuggest?: () => void;
@@ -62,6 +64,7 @@ export function Column({
   label,
   issues,
   selectedNumber = null,
+  multiSelected,
   liveByRun,
   onSelect,
   onOpen,
@@ -127,6 +130,7 @@ export function Column({
                 key={issue.number}
                 issue={issue}
                 selected={selectedNumber === issue.number}
+                multiSelected={multiSelected?.has(issue.number) ?? false}
                 liveTool={live}
                 onSelect={onSelect ?? (() => undefined)}
                 onOpen={onOpen ?? (() => undefined)}

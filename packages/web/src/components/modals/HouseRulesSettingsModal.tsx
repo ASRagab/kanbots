@@ -1,6 +1,7 @@
 import { Logo } from '../Logo.js';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { api } from '../../api.js';
+import { MarkdownEditor } from '../forms/MarkdownEditor.js';
 
 const HOUSE_RULES_MAX_BYTES = 8 * 1024;
 
@@ -14,7 +15,6 @@ export function HouseRulesSettingsModal({ onClose }: HouseRulesSettingsModalProp
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,25 +115,18 @@ export function HouseRulesSettingsModal({ onClose }: HouseRulesSettingsModalProp
           ) : null}
 
           {!loading ? (
-            <label className="kb-sentry-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+            <div className="kb-sentry-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
               <span className="kb-sentry-label" style={{ marginBottom: 6 }}>
                 Rules
               </span>
-              <textarea
-                ref={textareaRef}
+              <MarkdownEditor
                 value={draft}
+                onChange={setDraft}
+                rows={12}
+                ariaLabel="House rules"
                 placeholder={
                   'Examples:\n- Always use pnpm, never npm or yarn.\n- Prefer TanStack Query over hand-rolled fetch wrappers.\n- Run `pnpm lint` before declaring work done.'
                 }
-                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)}
-                rows={12}
-                style={{
-                  width: '100%',
-                  fontFamily: 'var(--mono, monospace)',
-                  fontSize: 13,
-                  padding: 8,
-                  resize: 'vertical',
-                }}
               />
               <div
                 className="kb-sentry-hint"
@@ -153,7 +146,7 @@ export function HouseRulesSettingsModal({ onClose }: HouseRulesSettingsModalProp
                   {byteLength} / {HOUSE_RULES_MAX_BYTES} bytes
                 </span>
               </div>
-            </label>
+            </div>
           ) : null}
         </div>
 

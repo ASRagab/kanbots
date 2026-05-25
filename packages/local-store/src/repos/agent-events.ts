@@ -125,4 +125,32 @@ export class AgentEventsRepo {
     for (const row of rows) out.set(row.agent_run_id, row.n);
     return out;
   }
+
+  /**
+   * Most-recent events across every run in the workspace, joined to the
+   * thread so callers can show "issue #N · <summary>" rows. Used by the
+   * rail's Activity section. `limit` is clamped at the call site; this
+   * just runs the ordered fetch.
+   */
+  listRecentAcrossWorkspace(
+    limit: number,
+  ): Array<AgentEvent & { issueNumber: number; runStatus: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT e.*, t.issue_number AS issue_number_alias, r.status AS run_status_alias
+         FROM agent_events e
+         JOIN agent_runs r ON e.agent_run_id = r.id
+         JOIN threads t ON r.thread_id = t.id
+         ORDER BY e.created_at DESC, e.id DESC
+         LIMIT ?`,
+      )
+      .all(limit) as Array<
+      AgentEventRow & { issue_number_alias: number; run_status_alias: string }
+    >;
+    return rows.map((row) => ({
+      ...rowToAgentEvent(row),
+      issueNumber: row.issue_number_alias,
+      runStatus: row.run_status_alias,
+    }));
+  }
 }

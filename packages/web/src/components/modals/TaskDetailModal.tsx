@@ -1,5 +1,6 @@
 import { Logo } from '../Logo.js';
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -9,7 +10,12 @@ import {
   type RefObject,
 } from 'react';
 import { api } from '../../api.js';
+import {
+  SessionDropdown,
+  useActiveSessionId,
+} from '../chat/SessionDropdown.js';
 import { useFetch } from '../../hooks/useFetch.js';
+import { useFocusedRepo } from '../../hooks/useFocusedRepo.js';
 import {
   useIssues,
   dispatchIssuesRefetch,
@@ -26,9 +32,10 @@ import {
   withStatus,
 } from '../../labels.js';
 import { AgentSpinner } from '../run/AgentSpinner.js';
-import { PreviewPanel } from '../run/PreviewPanel.js';
+import { PreviewPanel, type PreviewInspectSelection } from '../run/PreviewPanel.js';
 import { RunSummary } from '../run/RunSummary.js';
 import { ToolUseCard } from '../run/ToolUseCard.js';
+import { CreatePrModal } from './CreatePrModal.js';
 import type {
   AgentEvent,
   AgentRun,
@@ -37,11 +44,15 @@ import type {
   AutopilotPlanningSlot,
   AutopilotSession,
   Card,
+  ChatSessionPayload,
   DecisionPayload,
   DiffFile,
   DiffPayload,
   IssueDetail as IssueDetailPayload,
+  IssueRelationPayload,
   Message,
+  PrCommentPayload,
+  PrCommentsListResult,
   ProviderId,
   ReviewCommentPayload,
   SentrySuggestion,
@@ -87,9 +98,14 @@ function fmtTokens(n: number | null | undefined): string {
 export interface TaskDetailModalProps {
   issueNumber: number;
   onClose: () => void;
+  /** Optional. When supplied, the modal calls this to navigate to a
+   *  related issue (parent or sub-issue) instead of opening a second
+   *  modal layer. The host (App.tsx) sets the open-detail state with
+   *  the target number — the same handler the board uses. */
+  onOpenDetail?: (issueNumber: number) => void;
 }
 
-export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) {
+export function TaskDetailModal({ issueNumber, onClose, onOpenDetail }: TaskDetailModalProps) {
   const { data, loading, error, refetch } = useFetch<IssueDetailPayload>(
     `issue:${issueNumber}`,
     () => api.issue(issueNumber),
@@ -244,6 +260,10 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
             {issue ? (
               <>
                 <div className={`kb-tdm-hero${isRunning ? ' running' : ''}`}>
+                  <ParentBreadcrumb
+                    childNumber={issue.number}
+                    {...(onOpenDetail ? { onOpenDetail } : {})}
+                  />
                   <div className="kb-tdm-title-row">
                     <span className="kb-tdm-num">#{issue.number}</span>
                     <h1 className="kb-tdm-h1">{issue.title}</h1>
@@ -317,6 +337,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
                       issue={issue}
                       displayRun={displayRun}
                       cloudRunId={issue.cloudLatestRunId ?? issue.activeRun?.cloudRunId ?? null}
+                      {...(onOpenDetail ? { onOpenDetail } : {})}
                     />
                   ) : null}
                   {tab === 'thread' && !isAutopilot ? (
@@ -360,6 +381,7 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
           <span className="hint">Reply to agent</span>
           <ReplyFooter
             issueNumber={issueNumber}
+            threadId={data?.thread?.id ?? null}
             activeRun={activeRun}
             onSent={() => void refetch()}
           />
@@ -371,10 +393,16 @@ export function TaskDetailModal({ issueNumber, onClose }: TaskDetailModalProps) 
 
 function ReplyFooter({
   issueNumber,
+  threadId,
   activeRun,
   onSent,
 }: {
   issueNumber: number;
+  /** Issue's persisted thread id. NULL before the first reply is sent
+   *  (no thread row exists yet) — in that case we hide the session
+   *  dropdown and the first send lands without a chat-session tag,
+   *  matching the pre-multi-session behaviour. */
+  threadId: number | null;
   activeRun: AgentRun | null;
   onSent: () => void;
 }) {
@@ -385,12 +413,105 @@ function ReplyFooter({
   const [allCommands, setAllCommands] = useState<SlashCommandPayload[]>([]);
   const [slashIndex, setSlashIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [sessions, setSessions] = useState<ChatSessionPayload[]>([]);
+  // Persist the active session per-issue so re-opening the modal lands
+  // the composer back on the same session the user last picked. Scoped
+  // on `issueNumber` (cheap and human-readable) rather than threadId
+  // because the latter is only populated after the first reply.
+  const [activeSessionId, setActiveSessionId] = useActiveSessionId(
+    `kanbots.issue.${issueNumber}.active-session`,
+    null,
+  );
+
+  // Load the thread's sessions whenever the thread id appears or the
+  // active run id flips (a new run might mean a new session was
+  // bootstrapped by the post-message path). Also auto-bootstrap a
+  // single default session the first time we land on a thread that has
+  // never had one — saves the user from having to click "+ New" before
+  // their first reply.
+  const threadIdRef = useRef<number | null>(threadId);
+  threadIdRef.current = threadId;
+  useEffect(() => {
+    if (threadId === null) {
+      setSessions([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await api.listThreadChatSessions(threadId);
+        if (cancelled) return;
+        if (list.length === 0) {
+          // Bootstrap a default session pinned to the active run's
+          // provider when one is in flight (so resuming an existing run
+          // through the dropdown picks the right CLI), otherwise fall
+          // back to claude-code as the safe default.
+          const fallbackProvider: ProviderId =
+            activeRun?.provider === 'claude-code' ||
+            activeRun?.provider === 'codex-cli' ||
+            activeRun?.provider === 'gemini-cli' ||
+            activeRun?.provider === 'amp-cli' ||
+            activeRun?.provider === 'cursor-cli' ||
+            activeRun?.provider === 'copilot-cli' ||
+            activeRun?.provider === 'opencode-cli' ||
+            activeRun?.provider === 'droid-cli' ||
+            activeRun?.provider === 'ccr-cli' ||
+            activeRun?.provider === 'qwen-cli' ||
+            activeRun?.provider === 'acp'
+              ? activeRun.provider
+              : 'claude-code';
+          try {
+            const created = await api.createThreadChatSession({
+              threadId,
+              agentProvider: fallbackProvider,
+            });
+            if (cancelled) return;
+            setSessions([created]);
+            setActiveSessionId(created.id);
+          } catch {
+            // Best-effort: the dropdown will simply render empty and
+            // the next send goes through without a session tag.
+          }
+        } else {
+          setSessions(list);
+          if (activeSessionId === null && list[0]) {
+            setActiveSessionId(list[0].id);
+          }
+        }
+      } catch {
+        if (!cancelled) setSessions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally exclude activeSessionId / setActiveSessionId so we
+    // don't re-fetch on every selection — the dropdown drives its own
+    // state and the list only needs to refresh when the thread or
+    // active run changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId, activeRun?.id]);
+  const { focusedRepoId } = useFocusedRepo();
 
   // Pick the provider to query for slash commands. activeRun.provider can be
   // arbitrary strings from older runs, so narrow defensively.
   const provider: ProviderId = useMemo(() => {
     const p = activeRun?.provider;
-    if (p === 'claude-code' || p === 'codex-cli') return p;
+    if (
+      p === 'claude-code' ||
+      p === 'codex-cli' ||
+      p === 'gemini-cli' ||
+      p === 'amp-cli' ||
+      p === 'cursor-cli' ||
+      p === 'copilot-cli' ||
+      p === 'opencode-cli' ||
+      p === 'droid-cli' ||
+      p === 'ccr-cli' ||
+      p === 'qwen-cli' ||
+      p === 'acp'
+    ) {
+      return p;
+    }
     return 'claude-code';
   }, [activeRun?.provider]);
 
@@ -434,6 +555,24 @@ function ReplyFooter({
       window.clearInterval(id);
     };
   }, [activeRunId]);
+
+  // Listen for prefill requests from the preview inspect flow. The Preview
+  // tab dispatches `kanbots:composer:insert` with a formatted markdown block
+  // describing the clicked element; we append it to the current draft (with
+  // a newline separator if non-empty) and focus the input so the user can
+  // immediately add a question.
+  useEffect(() => {
+    function onInsert(e: Event): void {
+      const detail = (e as CustomEvent<{ text?: string }>).detail;
+      const text = detail?.text;
+      if (!text) return;
+      setBody((prev) => (prev.length === 0 ? text : `${prev}\n${text}`));
+      // Defer focus so the controlled-input value lands first.
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+    }
+    window.addEventListener('kanbots:composer:insert', onInsert);
+    return () => window.removeEventListener('kanbots:composer:insert', onInsert);
+  }, []);
 
   // Open the slash-command menu when the input starts with `/` and the
   // first whitespace hasn't appeared yet (i.e. the user is still typing
@@ -515,7 +654,10 @@ function ReplyFooter({
         }
         setPendingComments([]);
       }
-      await api.postMessage(issueNumber, messageBody);
+      const postOpts: Parameters<typeof api.postMessage>[2] = {};
+      if (focusedRepoId !== null) postOpts.repoId = focusedRepoId;
+      if (activeSessionId !== null) postOpts.chatSessionId = activeSessionId;
+      await api.postMessage(issueNumber, messageBody, postOpts);
       setBody('');
       onSent();
     } catch (err) {
@@ -527,6 +669,31 @@ function ReplyFooter({
 
   return (
     <>
+      {threadId !== null ? (
+        <div className="kb-chat-foot-session">
+          <SessionDropdown
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onActiveSessionChange={setActiveSessionId}
+            onSessionsChange={setSessions}
+            onCreateSession={(input) => {
+              const args: Parameters<typeof api.createThreadChatSession>[0] = {
+                threadId,
+                agentProvider: input.provider,
+              };
+              if (input.model !== null) args.agentModel = input.model;
+              if (input.title !== null && input.title.length > 0) {
+                args.title = input.title;
+              }
+              return api.createThreadChatSession(args);
+            }}
+            onRenameSession={(id, title) => api.renameThreadChatSession(id, title)}
+            onDeleteSession={async (id) => {
+              await api.deleteThreadChatSession(id);
+            }}
+          />
+        </div>
+      ) : null}
       <div className="kb-reply-input-wrap">
         {slashOpen && filteredCommands.length > 0 ? (
           <div className="kb-slash-menu" role="listbox" aria-label="Slash commands">
@@ -733,14 +900,306 @@ function LinkedIssues({
   );
 }
 
+/**
+ * Renders a compact "Parent: #<n> · <title>" link above the issue title
+ * when the current issue has at least one recorded parent. Clicking the
+ * link navigates to the parent via `onOpenDetail`. If no parent is
+ * recorded (the issue is a root) the component renders nothing.
+ */
+function ParentBreadcrumb({
+  childNumber,
+  onOpenDetail,
+}: {
+  childNumber: number;
+  onOpenDetail?: (issueNumber: number) => void;
+}) {
+  const [parents, setParents] = useState<IssueRelationPayload[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void api
+      .listIssueParents(childNumber)
+      .then((rows) => {
+        if (!cancelled) setParents(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setParents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [childNumber]);
+
+  if (loading || parents.length === 0) return null;
+
+  return (
+    <div className="kb-sub-issues-parent">
+      {parents.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          className="kb-sub-issues-parent-link"
+          onClick={() => onOpenDetail?.(p.child.number)}
+          disabled={!onOpenDetail}
+          title={`Open parent #${p.child.number}`}
+        >
+          <span className="kb-sub-issues-parent-label">Parent</span>
+          <span className="kb-sub-issues-parent-num">#{p.child.number}</span>
+          <span className="kb-sub-issues-parent-title">{p.child.title}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function statusBadge(status: StatusKey | null): { label: string; cls: string } {
+  // Mirrors the status pill conventions used elsewhere — kept inline to
+  // avoid pulling another file in just for the colour map. The labels
+  // here are short forms suitable for a tight list row.
+  switch (status) {
+    case 'backlog':
+      return { label: 'backlog', cls: 'kb-sub-issue-status-backlog' };
+    case 'todo':
+      return { label: 'todo', cls: 'kb-sub-issue-status-todo' };
+    case 'inProgress':
+      return { label: 'in progress', cls: 'kb-sub-issue-status-running' };
+    case 'review':
+      return { label: 'review', cls: 'kb-sub-issue-status-review' };
+    case 'done':
+      return { label: 'done', cls: 'kb-sub-issue-status-done' };
+    default:
+      return { label: 'inbox', cls: 'kb-sub-issue-status-inbox' };
+  }
+}
+
+/**
+ * Renders the list of child sub-issues for `parentNumber` plus an
+ * affordance to link an existing issue as a new sub-issue. Creating a
+ * brand-new sub-issue via the create modal is intentionally out of
+ * scope here — the user can create the issue first, then link it. That
+ * keeps this surface narrow and avoids cross-modal state passing.
+ */
+function SubIssuesSection({
+  parentNumber,
+  onOpenDetail,
+}: {
+  parentNumber: number;
+  onOpenDetail?: (issueNumber: number) => void;
+}) {
+  const [children, setChildren] = useState<IssueRelationPayload[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { issues: allIssues } = useIssues();
+
+  const refresh = useCallback(async () => {
+    try {
+      const rows = await api.listIssueChildren(parentNumber);
+      setChildren(rows);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [parentNumber]);
+
+  useEffect(() => {
+    setLoading(true);
+    void refresh();
+  }, [refresh]);
+
+  async function handleRemove(id: number): Promise<void> {
+    setError(null);
+    try {
+      await api.removeIssueRelation(id);
+      await refresh();
+      // Re-fetch the board so the "↳N" badge stays in sync after an
+      // unlink (the count lives on the decorated issue and only
+      // refreshes when the issues list refetches).
+      dispatchIssuesRefetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleAdd(childNumber: number): Promise<void> {
+    setError(null);
+    try {
+      await api.addIssueRelation({ parentNumber, childNumber });
+      setAdding(false);
+      await refresh();
+      dispatchIssuesRefetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div className="kb-tdm-section kb-sub-issues">
+      <h3>Sub-issues</h3>
+      {error ? (
+        <div className="kb-sub-issues-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {loading ? (
+        <div className="kb-sub-issues-empty">Loading…</div>
+      ) : children.length === 0 && !adding ? (
+        <div className="kb-sub-issues-empty">No sub-issues yet.</div>
+      ) : (
+        <div className="kb-sub-issues-list">
+          {children.map((rel) => {
+            const badge = statusBadge(rel.child.status);
+            return (
+              <div key={rel.id} className="kb-sub-issue-row">
+                <span className={`kb-sub-issue-pill ${badge.cls}`}>{badge.label}</span>
+                <button
+                  type="button"
+                  className="kb-sub-issue-open"
+                  onClick={() => onOpenDetail?.(rel.child.number)}
+                  disabled={!onOpenDetail}
+                  title={`Open #${rel.child.number}`}
+                >
+                  <span className="kb-sub-issue-num">#{rel.child.number}</span>
+                  <span className="kb-sub-issue-title">{rel.child.title}</span>
+                </button>
+                {rel.child.state === 'closed' ? (
+                  <span className="kb-sub-issue-closed">closed</span>
+                ) : null}
+                <button
+                  type="button"
+                  className="kb-sub-issue-unlink"
+                  onClick={() => void handleRemove(rel.id)}
+                  title="Unlink (the issue is not deleted)"
+                  aria-label={`Unlink #${rel.child.number}`}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {adding ? (
+        <SubIssueAddPicker
+          parentNumber={parentNumber}
+          existing={new Set(children.map((c) => c.child.number))}
+          allIssues={allIssues}
+          onPick={(n) => void handleAdd(n)}
+          onCancel={() => {
+            setAdding(false);
+            setError(null);
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className="kb-sub-issue-add"
+          onClick={() => setAdding(true)}
+        >
+          + Add sub-issue
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline picker that lets the user filter the workspace issue list by
+ * number/title and pick one to link as a sub-issue. Lives inside the
+ * SubIssuesSection so it can share the section's refresh callback and
+ * error state without the host modal having to mediate.
+ */
+function SubIssueAddPicker({
+  parentNumber,
+  existing,
+  allIssues,
+  onPick,
+  onCancel,
+}: {
+  parentNumber: number;
+  existing: Set<number>;
+  allIssues: ReadonlyArray<{
+    number: number;
+    title: string;
+    state: 'open' | 'closed';
+  }>;
+  onPick: (issueNumber: number) => void;
+  onCancel: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  // Filter to: non-self, non-already-linked, fuzzy-match against
+  // number/title. The list comes from `useIssues()` so it reflects the
+  // open board — the user can always cancel and link a closed issue by
+  // re-opening it first (linking closed issues is intentionally not a
+  // happy path on the board).
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = allIssues.filter((i) => {
+      if (i.number === parentNumber) return false;
+      if (existing.has(i.number)) return false;
+      if (!q) return true;
+      const numStr = `#${i.number}`;
+      return (
+        numStr.includes(q) ||
+        i.title.toLowerCase().includes(q) ||
+        String(i.number).includes(q)
+      );
+    });
+    return filtered.slice(0, 8);
+  }, [allIssues, query, parentNumber, existing]);
+
+  return (
+    <div className="kb-sub-issue-picker">
+      <div className="kb-sub-issue-picker-row">
+        <input
+          type="text"
+          className="kb-input kb-sub-issue-input"
+          placeholder="Search by # or title…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          autoFocus
+        />
+        <button type="button" className="kb-btn ghost" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      <div className="kb-sub-issue-matches">
+        {matches.length === 0 ? (
+          <div className="kb-sub-issues-empty">No matches.</div>
+        ) : (
+          matches.map((i) => (
+            <button
+              key={i.number}
+              type="button"
+              className="kb-sub-issue-match"
+              onClick={() => onPick(i.number)}
+            >
+              <span className="kb-sub-issue-num">#{i.number}</span>
+              <span className="kb-sub-issue-title">{i.title}</span>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OverviewTab({
   issue,
   displayRun,
   cloudRunId,
+  onOpenDetail,
 }: {
   issue: IssueDetailPayload['issue'];
   displayRun: AgentRun | null;
   cloudRunId: string | null;
+  onOpenDetail?: (issueNumber: number) => void;
 }) {
   const stream = useIssueRunStream(displayRun, cloudRunId);
   const recentToolCalls = stream.events.filter((e) => e.type === 'tool_use').slice(-4).reverse();
@@ -756,6 +1215,11 @@ function OverviewTab({
         <h3>Description</h3>
         <div className="kb-desc-md">{issue.body || '(no description)'}</div>
       </div>
+
+      <SubIssuesSection
+        parentNumber={issue.number}
+        {...(onOpenDetail ? { onOpenDetail } : {})}
+      />
 
       {acItems.length > 0 ? (
         <div className="kb-tdm-section">
@@ -1003,59 +1467,295 @@ function ThreadTab({
 
   if (items.length === 0 && !isRunning) {
     return (
-      <div className="kb-tdm-section" ref={sectionRef}>
-        <h3>Agent thread</h3>
-        <div className="kb-desc-md" style={{ color: 'var(--ink-3)' }}>
-          No agent activity yet. Reply below to start the conversation.
+      <>
+        <div className="kb-tdm-section" ref={sectionRef}>
+          <h3>Agent thread</h3>
+          <div className="kb-desc-md" style={{ color: 'var(--ink-3)' }}>
+            No agent activity yet. Reply below to start the conversation.
+          </div>
         </div>
-      </div>
+        <PrCommentsSection issueNumber={issueNumber} />
+      </>
     );
   }
 
   return (
-    <div className="kb-tdm-section" ref={sectionRef}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-        <h3 style={{ margin: 0 }}>Agent thread</h3>
-        {displayRun ? (
-          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-            run #{displayRun.id} · {STATUS_LABEL[displayRun.status]}
-            {isLive ? '' : ` · ended ${ageString(displayRun.endedAt ?? displayRun.startedAt)} ago`}
-          </span>
+    <>
+      <div className="kb-tdm-section" ref={sectionRef}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+          <h3 style={{ margin: 0 }}>Agent thread</h3>
+          {displayRun ? (
+            <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              run #{displayRun.id} · {STATUS_LABEL[displayRun.status]}
+              {isLive ? '' : ` · ended ${ageString(displayRun.endedAt ?? displayRun.startedAt)} ago`}
+            </span>
+          ) : null}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {items.map((it) =>
+            it.kind === 'message' ? (
+              <MessageRow key={it.id} message={it.message} cards={it.cards} />
+            ) : it.event.type === 'tool_use' ? (
+              <ToolUseCard
+                key={it.id}
+                toolUse={it.event}
+                result={resultByToolUseId.get(toolUseIdOf(it.event)) ?? null}
+                isLive={isLive}
+              />
+            ) : (
+              <EventRow key={it.id} event={it.event} />
+            ),
+          )}
+          {isRunning && displayRun ? (
+            <AgentSpinner
+              seed={displayRun.id}
+              startedAt={displayRun.startedAt}
+              tokensOut={displayRun.tokenUsageOutput ?? null}
+            />
+          ) : null}
+          {displayRun && displayRun.status === 'complete' ? (
+            <CompletionActions
+              runId={displayRun.id}
+              issueNumber={issueNumber}
+              issueLabels={issueLabels}
+              issueStatus={issueStatus}
+              onChanged={onActionDone}
+            />
+          ) : null}
+        </div>
+      </div>
+      <PrCommentsSection issueNumber={issueNumber} />
+    </>
+  );
+}
+
+/**
+ * Section appended to the Thread tab that surfaces the comments on the
+ * GitHub PR linked to this issue (when one exists). Polls every 30s
+ * while the modal is mounted; degrades to a single fetch on mount when
+ * the workspace is in local mode or the PR can't be located.
+ */
+function PrCommentsSection({ issueNumber }: { issueNumber: number }) {
+  const [data, setData] = useState<PrCommentsListResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState('');
+  const [posting, setPosting] = useState(false);
+
+  const refetch = useCallback(async (): Promise<void> => {
+    try {
+      const next = await api.listPrComments(issueNumber);
+      setData(next);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [issueNumber]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await api.listPrComments(issueNumber);
+        if (!cancelled) {
+          setData(next);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+    // Poll every 30s while the modal is open. Tolerable for a personal
+    // PAT (~120 calls/hr); the conditional fetch (cache-aware Octokit
+    // hook already in GitHubClient) makes most polls return 304.
+    const interval = window.setInterval(() => {
+      void refetch();
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [issueNumber, refetch]);
+
+  const onSubmitReply = useCallback(async (): Promise<void> => {
+    const trimmed = replyBody.trim();
+    if (trimmed.length === 0 || posting) return;
+    setPosting(true);
+    setError(null);
+    try {
+      await api.replyToPrComment(issueNumber, trimmed);
+      setReplyBody('');
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPosting(false);
+    }
+  }, [replyBody, posting, issueNumber, refetch]);
+
+  // Hide the section entirely when the workspace can't surface PR
+  // comments (local mode, no linked PR, or initial load hasn't returned
+  // yet AND there's nothing to render).
+  if (data === null && error === null) return null;
+  if (data !== null && data.linkedPullNumber === null) return null;
+
+  const comments = data?.comments ?? [];
+  const inlineGroups = groupInlineComments(comments);
+  const conversationComments = comments.filter((c) => !c.inline);
+
+  return (
+    <div className="kb-pr-comments">
+      <div className="kb-pr-comments-head">
+        <GitHubGlyph />
+        <span>PR review</span>
+        {data?.linkedPullNumber !== undefined && data.linkedPullNumber !== null ? (
+          <a
+            href={data.linkedPullHtmlUrl ?? '#'}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{ color: 'var(--ink-3)', marginLeft: 4 }}
+          >
+            #{data.linkedPullNumber}
+          </a>
         ) : null}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {items.map((it) =>
-          it.kind === 'message' ? (
-            <MessageRow key={it.id} message={it.message} cards={it.cards} />
-          ) : it.event.type === 'tool_use' ? (
-            <ToolUseCard
-              key={it.id}
-              toolUse={it.event}
-              result={resultByToolUseId.get(toolUseIdOf(it.event)) ?? null}
-              isLive={isLive}
-            />
-          ) : (
-            <EventRow key={it.id} event={it.event} />
-          ),
-        )}
-        {isRunning && displayRun ? (
-          <AgentSpinner
-            seed={displayRun.id}
-            startedAt={displayRun.startedAt}
-            tokensOut={displayRun.tokenUsageOutput ?? null}
-          />
-        ) : null}
-        {displayRun && displayRun.status === 'complete' ? (
-          <CompletionActions
-            runId={displayRun.id}
-            issueNumber={issueNumber}
-            issueLabels={issueLabels}
-            issueStatus={issueStatus}
-            onChanged={onActionDone}
-          />
-        ) : null}
+      {error ? (
+        <div style={{ color: 'var(--failed)', fontSize: 12, marginBottom: 8 }}>
+          {error}
+        </div>
+      ) : null}
+      {comments.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 8 }}>
+          No comments on the PR yet.
+        </div>
+      ) : null}
+      {conversationComments.map((c) => (
+        <PrCommentRow key={`c${c.id}`} comment={c} />
+      ))}
+      {inlineGroups.map((group) => (
+        <div key={`g:${group.filePath}`}>
+          <div className="kb-pr-comment-file">{group.filePath}</div>
+          {group.comments.map((c) => (
+            <PrCommentRow key={`i${c.id}`} comment={c} />
+          ))}
+        </div>
+      ))}
+      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <textarea
+          value={replyBody}
+          onChange={(e) => setReplyBody(e.target.value)}
+          placeholder="Reply on the PR…"
+          rows={2}
+          style={{
+            background: 'var(--bg-1)',
+            border: '1px solid var(--hairline)',
+            borderRadius: 8,
+            padding: '6px 9px',
+            fontSize: 12.5,
+            color: 'var(--ink-1)',
+            outline: 'none',
+            fontFamily: 'inherit',
+            resize: 'vertical',
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="kb-btn ghost"
+            disabled={posting || replyBody.trim().length === 0}
+            onClick={() => void onSubmitReply()}
+          >
+            {posting ? 'Posting…' : 'Reply on PR'}
+          </button>
+        </div>
       </div>
     </div>
+  );
+}
+
+interface InlineCommentGroup {
+  filePath: string;
+  comments: PrCommentPayload[];
+}
+
+function groupInlineComments(
+  comments: ReadonlyArray<PrCommentPayload>,
+): InlineCommentGroup[] {
+  const byFile = new Map<string, PrCommentPayload[]>();
+  for (const c of comments) {
+    if (!c.inline) continue;
+    const path = c.filePath ?? '(unknown)';
+    const list = byFile.get(path) ?? [];
+    list.push(c);
+    byFile.set(path, list);
+  }
+  return Array.from(byFile.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([filePath, list]) => ({ filePath, comments: list }));
+}
+
+function PrCommentRow({ comment }: { comment: PrCommentPayload }) {
+  const login = comment.author.login;
+  const initials = login.slice(0, 2).toUpperCase();
+  const tone = colorForLogin(login);
+  return (
+    <div className="kb-pr-comment">
+      {comment.author.avatarUrl ? (
+        <img
+          className="kb-pr-comment-avatar"
+          src={comment.author.avatarUrl}
+          alt={login}
+        />
+      ) : (
+        <span
+          className="kb-pr-comment-avatar"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: tone,
+            color: 'var(--bg-1)',
+            fontSize: 10,
+            fontWeight: 600,
+          }}
+        >
+          {initials}
+        </span>
+      )}
+      <div>
+        <div className="kb-pr-comment-meta">
+          <a
+            href={comment.htmlUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{ color: 'var(--ink-1)', fontWeight: 500 }}
+          >
+            {login}
+          </a>
+          {' · '}
+          {ageString(comment.createdAt)} ago
+          {comment.inline && comment.lineNumber !== undefined
+            ? ` · line ${comment.lineNumber}`
+            : ''}
+        </div>
+        <div className="kb-pr-comment-body">{comment.body}</div>
+      </div>
+    </div>
+  );
+}
+
+function GitHubGlyph() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="12"
+      height="12"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+    </svg>
   );
 }
 
@@ -1128,7 +1828,9 @@ function CompletionActions({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [prModalOpen, setPrModalOpen] = useState(false);
   const alreadyDone = issueStatus === 'done';
+  const { focusedRepoId } = useFocusedRepo();
 
   async function call<T>(
     name: string,
@@ -1169,7 +1871,11 @@ function CompletionActions({
           onClick={() =>
             void call(
               'review',
-              () => api.spawnReviewer(issueNumber),
+              () =>
+                api.spawnReviewer(
+                  issueNumber,
+                  focusedRepoId !== null ? { repoId: focusedRepoId } : {},
+                ),
               (r) => `Review agent started — run #${r.id}`,
             )
           }
@@ -1201,15 +1907,14 @@ function CompletionActions({
           type="button"
           className="kb-btn ghost"
           disabled={busy !== null}
-          onClick={() =>
-            void call(
-              'pr',
-              () => api.promotePR(runId),
-              (r) => `PR opened: ${r.pr.htmlUrl}`,
-            )
-          }
+          onClick={() => {
+            setError(null);
+            setInfo(null);
+            setPrModalOpen(true);
+          }}
+          title="Drafts a title + body from this run's diff, then opens the PR with your edits."
         >
-          {busy === 'pr' ? 'Opening…' : 'Open PR'}
+          Open draft PR
         </button>
       </div>
       {info ? (
@@ -1217,6 +1922,17 @@ function CompletionActions({
       ) : null}
       {error ? (
         <div style={{ fontSize: 11, color: 'var(--failed)', marginTop: 8 }}>error: {error}</div>
+      ) : null}
+      {prModalOpen ? (
+        <CreatePrModal
+          runId={runId}
+          onClose={() => setPrModalOpen(false)}
+          onCreated={(prUrl) => {
+            setPrModalOpen(false);
+            setInfo(`PR opened: ${prUrl}`);
+            onChanged();
+          }}
+        />
       ) : null}
     </div>
   );
@@ -1517,6 +2233,19 @@ function DiffFileBlockModal({ file }: { file: DiffFile }) {
 }
 
 function PreviewTabModal({ activeRun }: { activeRun: AgentRun | null }) {
+  // Translate an inspect selection into a markdown context block and hand it
+  // to the chat composer via a window-scoped event. The composer
+  // (`ReplyFooter`) listens for `kanbots:composer:insert` regardless of the
+  // currently-visible tab — it lives in the modal footer, so the insert
+  // always lands even if the user is staring at the Preview tab.
+  function handleInspectSelect(sel: PreviewInspectSelection): void {
+    const header = formatInspectHeader(sel);
+    const preview = sel.textPreview.trim();
+    const block = preview ? `${header}\n\`${preview}\`\n\n` : `${header}\n\n`;
+    window.dispatchEvent(
+      new CustomEvent('kanbots:composer:insert', { detail: { text: block } }),
+    );
+  }
   return (
     <div className="kb-tdm-section">
       <h3>Branch preview · live dev server on this worktree</h3>
@@ -1525,9 +2254,30 @@ function PreviewTabModal({ activeRun }: { activeRun: AgentRun | null }) {
         worktreePath={activeRun?.worktreePath ?? null}
         {...(activeRun ? { activeRunId: activeRun.id } : {})}
         size="tall"
+        onInspectSelect={handleInspectSelect}
       />
     </div>
   );
+}
+
+function formatInspectHeader(sel: PreviewInspectSelection): string {
+  const loc =
+    sel.filePath && typeof sel.lineNumber === 'number'
+      ? `\`src/${sel.filePath}:${sel.lineNumber}\``
+      : sel.filePath
+        ? `\`src/${sel.filePath}\``
+        : null;
+  if (sel.reactComponent && loc) {
+    return `Inspecting <${sel.reactComponent}> in ${loc}:`;
+  }
+  if (loc) {
+    const idSuffix = sel.id ? `#${sel.id}` : '';
+    return `Inspecting <${sel.tagName}${idSuffix}> in ${loc}:`;
+  }
+  if (sel.selector) {
+    return `Inspecting <${sel.tagName}> at \`${sel.selector}\`:`;
+  }
+  return `Inspecting <${sel.tagName}>:`;
 }
 
 function RunsTab({ issueNumber }: { issueNumber: number }) {

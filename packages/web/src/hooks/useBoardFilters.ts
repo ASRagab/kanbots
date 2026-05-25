@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { usePrefsStore } from '../stores/usePrefsStore.js';
 import { areaLabels, priorityFromLabels, type Priority } from '../labels.js';
 import type { Issue } from '../types.js';
 
@@ -14,23 +15,14 @@ const EMPTY_FILTERS: BoardFilters = {
   areas: new Set(),
 };
 
-const INCLUDE_BACKLOG_KEY = 'kanbots:board:includeBacklog';
-
-function readIncludeBacklog(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(INCLUDE_BACKLOG_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
 export interface BoardFilterAPI {
   filters: BoardFilters;
   filtered: Issue[];
   /**
    * Backlog is hidden by default to keep the board focused on active work.
-   * Toggle to show it; preference is persisted to localStorage.
+   * Toggle to show it; preference is persisted via the unified prefs store.
+   * Filter state (hasAgent/priorities/areas) is session-scoped — only the
+   * `includeBacklog` flag persists.
    */
   includeBacklog: boolean;
   toggleIncludeBacklog: () => void;
@@ -46,16 +38,8 @@ const PRIORITY_ORDER: Priority[] = ['p0', 'p1', 'p2', 'p3'];
 
 export function useBoardFilters(issues: Issue[]): BoardFilterAPI {
   const [filters, setFilters] = useState<BoardFilters>(EMPTY_FILTERS);
-  const [includeBacklog, setIncludeBacklog] = useState<boolean>(() => readIncludeBacklog());
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(INCLUDE_BACKLOG_KEY, includeBacklog ? '1' : '0');
-    } catch {
-      // ignore — private mode / quota.
-    }
-  }, [includeBacklog]);
+  const includeBacklog = usePrefsStore((s) => s.board.includeBacklog);
+  const setBoardIncludeBacklog = usePrefsStore((s) => s.setBoardIncludeBacklog);
 
   const availablePriorities = useMemo<Priority[]>(() => {
     const seen = new Set<Priority>();
@@ -115,9 +99,9 @@ export function useBoardFilters(issues: Issue[]): BoardFilterAPI {
   function clear(): void {
     setFilters(EMPTY_FILTERS);
   }
-  function toggleIncludeBacklog(): void {
-    setIncludeBacklog((v) => !v);
-  }
+  const toggleIncludeBacklog = useCallback(() => {
+    setBoardIncludeBacklog(!includeBacklog);
+  }, [includeBacklog, setBoardIncludeBacklog]);
 
   return {
     filters,

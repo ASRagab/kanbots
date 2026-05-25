@@ -5,11 +5,14 @@ import { AgentChecksRepo } from './repos/agent-checks.js';
 import { AgentEventsRepo } from './repos/agent-events.js';
 import { AgentRunsRepo } from './repos/agent-runs.js';
 import { AutopilotSessionsRepo } from './repos/autopilot-sessions.js';
+import { CardTemplatesRepo } from './repos/card-templates.js';
 import { CardsRepo } from './repos/cards.js';
 import { ChatConversationsRepo } from './repos/chat-conversations.js';
+import { ChatSessionsRepo } from './repos/chat-sessions.js';
 import { DiffHunksRepo } from './repos/diff-hunks.js';
 import { FoldersRepo } from './repos/folders.js';
 import { HttpCacheRepo } from './repos/http-cache.js';
+import { IssueRelationsRepo } from './repos/issue-relations.js';
 import { LearningsRepo } from './repos/learnings.js';
 import { LocalIssuesRepo } from './repos/local-issues.js';
 import { MessagesRepo } from './repos/messages.js';
@@ -19,13 +22,16 @@ import { ReviewCommentsRepo } from './repos/review-comments.js';
 import { SentryConfigRepo } from './repos/sentry-config.js';
 import { SentryImportsRepo } from './repos/sentry-imports.js';
 import { ThreadsRepo } from './repos/threads.js';
+import { WorkspaceReposRepo } from './repos/workspace-repos.js';
 import { WorkspacesRepo } from './repos/workspaces.js';
 
 export interface Store {
   readonly threads: ThreadsRepo;
   readonly messages: MessagesRepo;
   readonly cards: CardsRepo;
+  readonly cardTemplates: CardTemplatesRepo;
   readonly chatConversations: ChatConversationsRepo;
+  readonly chatSessions: ChatSessionsRepo;
   readonly agentRuns: AgentRunsRepo;
   readonly events: AgentEventsRepo;
   readonly checks: AgentChecksRepo;
@@ -34,7 +40,9 @@ export interface Store {
   readonly learnings: LearningsRepo;
   readonly diffHunks: DiffHunksRepo;
   readonly localIssues: LocalIssuesRepo;
+  readonly issueRelations: IssueRelationsRepo;
   readonly workspaces: WorkspacesRepo;
+  readonly workspaceRepos: WorkspaceReposRepo;
   readonly folders: FoldersRepo;
   readonly autopilotSessions: AutopilotSessionsRepo;
   readonly providers: ProvidersRepo;
@@ -65,7 +73,9 @@ function wrap(db: Db): Store {
     threads: new ThreadsRepo(db),
     messages: new MessagesRepo(db),
     cards: new CardsRepo(db),
+    cardTemplates: new CardTemplatesRepo(db),
     chatConversations: new ChatConversationsRepo(db),
+    chatSessions: new ChatSessionsRepo(db),
     agentRuns: new AgentRunsRepo(db),
     events: new AgentEventsRepo(db),
     checks: new AgentChecksRepo(db),
@@ -74,7 +84,9 @@ function wrap(db: Db): Store {
     learnings: new LearningsRepo(db),
     diffHunks: new DiffHunksRepo(db),
     localIssues: new LocalIssuesRepo(db),
+    issueRelations: new IssueRelationsRepo(db),
     workspaces: new WorkspacesRepo(db),
+    workspaceRepos: new WorkspaceReposRepo(db),
     folders: new FoldersRepo(db),
     autopilotSessions: new AutopilotSessionsRepo(db),
     providers: new ProvidersRepo(db),
@@ -95,12 +107,18 @@ export type { Migration } from './migrations/types.js';
 
 export { CardAlreadyResolvedError } from './repos/cards.js';
 export type { CreateCardInput } from './repos/cards.js';
+export type {
+  CardTemplate,
+  CreateCardTemplateInput,
+  UpdateCardTemplatePatch,
+} from './repos/card-templates.js';
 export type { CreateThreadInput } from './repos/threads.js';
 export {
   CHAT_REPO_NAME,
   CHAT_REPO_OWNER,
   type CreateChatConversationInput,
 } from './repos/chat-conversations.js';
+export type { CreateChatSessionInput } from './repos/chat-sessions.js';
 export type { CreateMessageInput } from './repos/messages.js';
 export type { CreateAgentRunInput, UpdateAgentRunPatch } from './repos/agent-runs.js';
 export type {
@@ -129,6 +147,10 @@ export {
   type CreateLocalIssueInput,
   type UpdateLocalIssuePatch,
 } from './repos/local-issues.js';
+export type {
+  AddIssueRelationInput,
+  IssueRelation,
+} from './repos/issue-relations.js';
 export { LocalIssueSource, type LocalIssueSourceOptions } from './local-issue-source.js';
 
 export type { ProviderConfigPatch, ProviderSettingsPatch } from './repos/providers.js';
@@ -145,6 +167,10 @@ export type { UpsertSentryImportInput } from './repos/sentry-imports.js';
 
 export type { Workspace, CreateWorkspaceInput } from './repos/workspaces.js';
 export type { Folder, CreateFolderInput } from './repos/folders.js';
+export type {
+  WorkspaceRepo,
+  AddWorkspaceRepoInput,
+} from './repos/workspace-repos.js';
 
 export {
   describeKanbotsDir,
@@ -196,6 +222,9 @@ export type {
   CardType,
   ChatConversation,
   ChatConversationId,
+  ChatSession,
+  ChatSessionId,
+  ChatSessionStatus,
   CheckKind,
   CheckStatus,
   CuratorRunState,

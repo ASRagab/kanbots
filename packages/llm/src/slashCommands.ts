@@ -108,6 +108,179 @@ const CODEX_BUILTINS: readonly SlashCommand[] = [
   },
 ];
 
+const GEMINI_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'login',
+    description: 'Sign in to Google to authorize Gemini CLI',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Display sign-in state and current session info',
+    source: 'builtin',
+  },
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+];
+
+const AMP_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'login',
+    description: 'Sign in to Sourcegraph to authorize Amp',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Display sign-in state and current session info',
+    source: 'builtin',
+  },
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+];
+
+const CURSOR_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'login',
+    description: 'Sign in to Cursor to authorize the agent',
+    source: 'builtin',
+  },
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Display sign-in state and current session info',
+    source: 'builtin',
+  },
+];
+
+const COPILOT_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'login',
+    description: 'Sign in to GitHub to authorize Copilot',
+    source: 'builtin',
+  },
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Display sign-in state and current session info',
+    source: 'builtin',
+  },
+];
+
+const OPENCODE_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'compact',
+    description: 'Compact the session',
+    source: 'builtin',
+  },
+  {
+    name: 'commands',
+    description: 'Show all available commands',
+    source: 'builtin',
+  },
+  {
+    name: 'models',
+    description: 'List available models',
+    source: 'builtin',
+  },
+  {
+    name: 'agents',
+    description: 'List available agents',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Show status information',
+    source: 'builtin',
+  },
+  {
+    name: 'mcp',
+    description: 'Show MCP server status',
+    source: 'builtin',
+  },
+];
+
+const DROID_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'login',
+    description: 'Sign in to Factory to authorize Droid',
+    source: 'builtin',
+  },
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Display sign-in state and current session info',
+    source: 'builtin',
+  },
+];
+
+const CCR_BUILTINS: readonly SlashCommand[] = [
+  // CCR is a router in front of claude — most commands pass through to
+  // the upstream claude CLI, so the catalogue mirrors claude's curated
+  // list.
+  {
+    name: 'compact',
+    description: 'Clear conversation history but keep a summary in context',
+    source: 'builtin',
+  },
+  {
+    name: 'context',
+    description: 'Visualize current context usage',
+    source: 'builtin',
+  },
+  {
+    name: 'cost',
+    description: 'Show the total cost and duration of the current session',
+    source: 'builtin',
+  },
+];
+
+const QWEN_BUILTINS: readonly SlashCommand[] = [
+  {
+    name: 'login',
+    description: 'Sign in to authorize Qwen Code',
+    source: 'builtin',
+  },
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+  {
+    name: 'status',
+    description: 'Display sign-in state and current session info',
+    source: 'builtin',
+  },
+];
+
+const ACP_BUILTINS: readonly SlashCommand[] = [
+  // ACP slash-command discovery is delegated to whichever agent is
+  // spawned. The cross-agent baseline is just `/compact`; the configured
+  // ACP server adds its own commands at runtime.
+  {
+    name: 'compact',
+    description: 'Summarize the conversation to free tokens',
+    source: 'builtin',
+  },
+];
+
 /**
  * Kanbots orchestration commands. These work the same regardless of which
  * agent CLI is selected — the composer/dispatcher recognises them ahead of
@@ -178,6 +351,42 @@ export async function discoverSlashCommands(args: {
 
   if (args.agent === 'codex-cli') {
     return mergeAndDedupe([...KANBOTS_COMMANDS, ...CODEX_BUILTINS]);
+  }
+
+  if (args.agent === 'gemini-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...GEMINI_BUILTINS]);
+  }
+
+  if (args.agent === 'amp-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...AMP_BUILTINS]);
+  }
+
+  if (args.agent === 'cursor-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...CURSOR_BUILTINS]);
+  }
+
+  if (args.agent === 'copilot-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...COPILOT_BUILTINS]);
+  }
+
+  if (args.agent === 'opencode-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...OPENCODE_BUILTINS]);
+  }
+
+  if (args.agent === 'droid-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...DROID_BUILTINS]);
+  }
+
+  if (args.agent === 'ccr-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...CCR_BUILTINS]);
+  }
+
+  if (args.agent === 'qwen-cli') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...QWEN_BUILTINS]);
+  }
+
+  if (args.agent === 'acp') {
+    return mergeAndDedupe([...KANBOTS_COMMANDS, ...ACP_BUILTINS]);
   }
 
   // Exhaustiveness — if a new AgentKey lands, surface that explicitly

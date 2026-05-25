@@ -6,6 +6,7 @@ import {
   defaultBranchName,
   defaultWorktreePath,
   DEFAULT_GRACEFUL_TIMEOUT_MS,
+  setAcpWorkspaceCommand,
   stampWorktreeIdentity as defaultStampWorktreeIdentity,
   inspectToolUse,
   startAgentRun as defaultStartAgentRun,
@@ -74,6 +75,15 @@ export interface CreateSupervisorOptions {
    * empty/whitespace-only value is treated as "no rules".
    */
   houseRules?: string | null | (() => string | null | undefined);
+  /**
+   * Shell-style command invoked by the ACP adapter when the user selects the
+   * `acp` provider. The supervisor reads this just before spawning and
+   * forwards it to the dispatcher via `setAcpWorkspaceCommand`, so the user
+   * can change it from Settings without restarting the desktop app. When
+   * unset/empty the dispatcher falls back to `KANBOTS_ACP_COMMAND`, then to
+   * the documented Gemini default. Pass a function to read it dynamically.
+   */
+  acpCommand?: string | null | (() => string | null | undefined);
   onRunComplete?: (run: AgentRun) => Promise<void> | void;
   /**
    * Maximum time to wait after SIGTERM before escalating to SIGKILL during stop().
@@ -109,6 +119,25 @@ export interface StartRunInput {
    *  card_size_bucket and kept around so thresholds can be re-tuned without
    *  losing history. */
   issueBodyChars?: number;
+  /**
+   * Which workspace repo to base the run's worktree on. When set, the
+   * supervisor reads the repo's path from `workspace_repos` instead of
+   * falling back to the host-level `repoPath`. Omit to use the workspace's
+   * primary repo (which is the host-level repoPath in single-repo setups
+   * post-migration 0025). Callers that don't yet know about multi-repo
+   * workspaces can keep omitting this and they keep working.
+   */
+  repoId?: number;
+  /**
+   * Issue-thread chat-session id when the run was dispatched from the
+   * TaskDetailModal reply footer's session dropdown. Persisted on the
+   * agent_runs row so the renderer can filter the transcript by session
+   * and scope active/latest run lookups per session (see
+   * findActiveForChatSession / findLatestForChatSession). NULL for runs
+   * dispatched outside the session dropdown (legacy issue replies,
+   * drag-to-inProgress, autopilot children).
+   */
+  chatSessionId?: number;
 }
 
 export interface ResumeRunInput {
@@ -136,6 +165,13 @@ export interface StartChatInput {
    * tool-bridge URL + token to the MCP server.
    */
   env?: Record<string, string>;
+  /**
+   * Chat-session scope for the new run. Stored on the agent_runs row
+   * (column `chat_session_id`) so a conversation with multiple parallel
+   * sessions can keep their event streams cleanly separated. Distinct
+   * from the dispatcher session token recorded in `session_id`.
+   */
+  chatSessionId?: number;
 }
 
 export interface ResumeChatInput {
@@ -260,6 +296,27 @@ export async function createSupervisor(
     return null;
   }
 
+  /**
+   * Push the workspace-configured ACP command into the dispatcher adapter
+   * just before spawning. Always called (regardless of provider) so changes
+   * are observed promptly; non-ACP runs ignore the override entirely.
+   */
+  function applyAcpWorkspaceCommand(): void {
+    const raw = opts.acpCommand;
+    let value: string | null | undefined;
+    if (typeof raw === 'function') {
+      value = raw();
+    } else {
+      value = raw;
+    }
+    if (value === undefined || value === null) {
+      setAcpWorkspaceCommand(null);
+      return;
+    }
+    const trimmed = value.trim();
+    setAcpWorkspaceCommand(trimmed.length > 0 ? trimmed : null);
+  }
+
   function resolveBudget(explicit: number | null | undefined): number | null {
     if (explicit === null) return null;
     if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit > 0) {
@@ -277,7 +334,21 @@ export async function createSupervisor(
     if (explicit) return explicit;
     try {
       const def = store.providerSettings.get().defaultProvider;
-      if (def === 'claude-code' || def === 'codex-cli') return def;
+      if (
+        def === 'claude-code' ||
+        def === 'codex-cli' ||
+        def === 'gemini-cli' ||
+        def === 'amp-cli' ||
+        def === 'cursor-cli' ||
+        def === 'copilot-cli' ||
+        def === 'opencode-cli' ||
+        def === 'droid-cli' ||
+        def === 'ccr-cli' ||
+        def === 'qwen-cli' ||
+        def === 'acp'
+      ) {
+        return def;
+      }
     } catch {
       // settings row may not exist on first run — fall through
     }
@@ -669,6 +740,20 @@ export async function createSupervisor(
       }
       active.delete(run.id);
       if (status === 'complete') clearCooldownOnSuccess();
+      // Mirror the terminal status onto the owning chat_session so the
+      // multi-session dropdown's status dot reflects the run's outcome.
+      // 'starting'/'running' map to 'running'; awaiting_input is its own
+      // first-class session state; complete → 'completed'; everything
+      // else (failed/stopped/budget) lands as 'failed'.
+      if (updated.chatSessionId !== null) {
+        const sessionStatus =
+          status === 'awaiting_input'
+            ? 'awaiting_input'
+            : status === 'complete'
+              ? 'completed'
+              : 'failed';
+        store.chatSessions.setStatus(updated.chatSessionId, sessionStatus);
+      }
       emitter.emit(statusChannel(run.id), updated.status);
       if (status === 'complete' && opts.onRunComplete) {
         void Promise.resolve(opts.onRunComplete(updated)).catch(() => {
@@ -743,13 +828,33 @@ export async function createSupervisor(
   }
 
   async function startChat(input: StartChatInput): Promise<AgentRun> {
-    const conflicting = findActiveRunForThread(input.threadId);
-    if (conflicting !== null) {
-      throw threadAlreadyActiveError(conflicting);
+    // When the conversation has a session active on a *different* session
+    // a parallel session on the same conversation must be free to spawn,
+    // so we scope the conflict check to the session when one is provided
+    // and fall back to the thread-wide check otherwise (kept for
+    // legacy issue-style chats that don't ride on sessions yet).
+    if (input.chatSessionId !== undefined) {
+      const sessionActive = store.agentRuns.findActiveForChatSession(
+        input.chatSessionId,
+      );
+      if (sessionActive !== null) {
+        throw threadAlreadyActiveError(sessionActive);
+      }
+    } else {
+      const conflicting = findActiveRunForThread(input.threadId);
+      if (conflicting !== null) {
+        throw threadAlreadyActiveError(conflicting);
+      }
     }
     const cd = snapshotCooldown();
     if (cd.active) throw new RateLimitedError(cd);
-    let run = store.agentRuns.create({ threadId: input.threadId, status: 'starting' });
+    let run = store.agentRuns.create({
+      threadId: input.threadId,
+      status: 'starting',
+      ...(input.chatSessionId !== undefined
+        ? { chatSessionId: input.chatSessionId }
+        : {}),
+    });
     const budget = resolveBudget(input.costBudgetUsd);
     const provider = resolveProvider(input.provider);
     run = store.agentRuns.update(run.id, {
@@ -760,6 +865,7 @@ export async function createSupervisor(
     store.threads.setLastModel(input.threadId, provider, input.model ?? null);
     const composed = composeSystemPrompt(run.id, input.appendSystemPrompt);
     persistBriefing(run.id, composed.briefing);
+    applyAcpWorkspaceCommand();
     const handle = startAgent({
       cwd: resolveRepoPath(),
       prompt: input.prompt,
@@ -773,6 +879,9 @@ export async function createSupervisor(
       status: 'running',
       pid: handle.pid,
     });
+    if (run.chatSessionId !== null) {
+      store.chatSessions.setStatus(run.chatSessionId, 'running');
+    }
     wireHandle(run, handle);
     return run;
   }
@@ -785,15 +894,30 @@ export async function createSupervisor(
     if (active.has(input.runId)) {
       throw new Error(`agent run ${input.runId} is already active`);
     }
-    const conflicting = findActiveRunForThread(existing.threadId);
-    if (conflicting !== null && conflicting.id !== input.runId) {
-      throw threadAlreadyActiveError(conflicting);
+    // Multi-session chats can host parallel runs on the same thread —
+    // one per chat_session. Scope the conflict check to the run's own
+    // session when it has one so a busy sibling session doesn't block
+    // resume here. Issue-style threads (chatSessionId NULL) still use
+    // the thread-wide check below.
+    if (existing.chatSessionId !== null) {
+      const sessionActive = store.agentRuns.findActiveForChatSession(
+        existing.chatSessionId,
+      );
+      if (sessionActive !== null && sessionActive.id !== input.runId) {
+        throw threadAlreadyActiveError(sessionActive);
+      }
+    } else {
+      const conflicting = findActiveRunForThread(existing.threadId);
+      if (conflicting !== null && conflicting.id !== input.runId) {
+        throw threadAlreadyActiveError(conflicting);
+      }
     }
     if (!existing.sessionId) {
       throw new Error(`agent run ${input.runId} has no session_id to resume`);
     }
     const composed = composeSystemPrompt(input.runId, input.appendSystemPrompt);
     persistBriefing(input.runId, composed.briefing);
+    applyAcpWorkspaceCommand();
     const handle = startAgent({
       cwd: resolveRepoPath(),
       prompt: input.prompt,
@@ -812,24 +936,54 @@ export async function createSupervisor(
       pid: handle.pid,
       ...(input.costBudgetUsd !== undefined ? { costBudgetUsd: input.costBudgetUsd } : {}),
     });
+    if (run.chatSessionId !== null) {
+      store.chatSessions.setStatus(run.chatSessionId, 'running');
+    }
     wireHandle(run, handle);
     emitter.emit(statusChannel(run.id), run.status);
     return run;
   }
 
   async function start(input: StartRunInput): Promise<AgentRun> {
-    const conflicting = findActiveRunForThread(input.threadId);
-    if (conflicting !== null) {
-      throw threadAlreadyActiveError(conflicting);
+    // Issue-thread chat sessions can host parallel runs on the same
+    // thread (one per session), so scope the conflict check to the
+    // session when one is provided — mirrors the startChat path.
+    if (input.chatSessionId !== undefined) {
+      const sessionActive = store.agentRuns.findActiveForChatSession(
+        input.chatSessionId,
+      );
+      if (sessionActive !== null) {
+        throw threadAlreadyActiveError(sessionActive);
+      }
+    } else {
+      const conflicting = findActiveRunForThread(input.threadId);
+      if (conflicting !== null) {
+        throw threadAlreadyActiveError(conflicting);
+      }
     }
     const cd = snapshotCooldown();
     if (cd.active) throw new RateLimitedError(cd);
-    let run = store.agentRuns.create({ threadId: input.threadId, status: 'starting' });
+    let run = store.agentRuns.create({
+      threadId: input.threadId,
+      status: 'starting',
+      ...(input.chatSessionId !== undefined
+        ? { chatSessionId: input.chatSessionId }
+        : {}),
+    });
     const branch = defaultBranchName({
       issueNumber: input.issueNumber,
       runId: run.id,
     });
-    const repoPath = resolveRepoPath();
+    // Multi-repo: when the caller passes a workspace_repos.id, the run
+    // worktrees against that repo's path instead of the host-level
+    // default. Falls back silently to the host repoPath if the id is
+    // unknown — caller-facing validation lives in the IPC handlers, the
+    // supervisor stays permissive.
+    let repoPath = resolveRepoPath();
+    if (input.repoId !== undefined) {
+      const repoRow = store.workspaceRepos.findById(input.repoId);
+      if (repoRow) repoPath = repoRow.repoPath;
+    }
     const worktreePath = defaultWorktreePath({
       repoPath,
       issueNumber: input.issueNumber,
@@ -877,6 +1031,7 @@ export async function createSupervisor(
 
     const composed = composeSystemPrompt(run.id, input.appendSystemPrompt);
     persistBriefing(run.id, composed.briefing);
+    applyAcpWorkspaceCommand();
     const handle = startAgent({
       cwd: worktreePath,
       prompt: input.prompt,
@@ -889,6 +1044,9 @@ export async function createSupervisor(
       status: 'running',
       pid: handle.pid,
     });
+    if (run.chatSessionId !== null) {
+      store.chatSessions.setStatus(run.chatSessionId, 'running');
+    }
     wireHandle(run, handle);
     return run;
   }
@@ -914,6 +1072,7 @@ export async function createSupervisor(
 
     const composed = composeSystemPrompt(input.runId, input.appendSystemPrompt);
     persistBriefing(input.runId, composed.briefing);
+    applyAcpWorkspaceCommand();
     const handle = startAgent({
       cwd: existing.worktreePath,
       prompt: input.prompt,

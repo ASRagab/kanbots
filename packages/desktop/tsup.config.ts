@@ -1,3 +1,5 @@
+import { cp } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { defineConfig } from 'tsup';
 
 export default defineConfig([
@@ -13,6 +15,16 @@ export default defineConfig([
     clean: true,
     sourcemap: false,
     minify: false,
+    // The dispatcher's preview proxy serves Eruda + the inspect injector
+    // from disk at runtime. Since main.cjs bundles dispatcher inline, those
+    // assets aren't reachable via the dispatcher's own dist anymore. Copy
+    // them alongside main.cjs so a deterministic, host-supplied path
+    // (`__dirname/assets`) resolves at runtime.
+    async onSuccess() {
+      const src = resolve(process.cwd(), '..', 'dispatcher', 'assets');
+      const dest = resolve(process.cwd(), 'dist', 'assets');
+      await cp(src, dest, { recursive: true });
+    },
   },
   {
     entry: { preload: 'src/preload.ts' },

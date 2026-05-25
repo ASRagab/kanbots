@@ -145,6 +145,10 @@ export class ChatConversationsRepo {
       }
       this.db.prepare('DELETE FROM messages WHERE thread_id = ?').run(conv.threadId);
       this.db.prepare('DELETE FROM agent_runs WHERE thread_id = ?').run(conv.threadId);
+      // Drop dependent chat_sessions rows after their messages/runs are gone
+      // — FK constraint on chat_sessions(conversation_id) would otherwise
+      // block the conversation delete.
+      this.db.prepare('DELETE FROM chat_sessions WHERE conversation_id = ?').run(id);
       this.db.prepare('DELETE FROM chat_conversations WHERE id = ?').run(id);
       this.db.prepare('DELETE FROM threads WHERE id = ?').run(conv.threadId);
     })();

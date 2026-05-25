@@ -3,13 +3,17 @@ export const PACKAGE_NAME = '@kanbots/dispatcher';
 export {
   ComposerError,
   createComposer,
+  createPrDescriptionDrafter,
   createSuggester,
   type BacklogEntry,
   type CreateComposerOptions,
+  type CreatePrDescriptionDrafterOptions,
   type CreateSuggesterOptions,
   type DraftedIssue,
   type DraftIssueFn,
   type DraftIssueInput,
+  type DraftPrDescriptionFn,
+  type DraftPrDescriptionInput,
   type SpawnFn,
   type SuggestFeatureFn,
   type SuggestFeatureInput,
@@ -51,6 +55,8 @@ export {
   type StopEscalation,
 } from './worker.js';
 
+export { setAcpWorkspaceCommand } from './adapters/acp.js';
+
 export {
   createWorktree,
   removeWorktree,
@@ -90,3 +96,9 @@ export {
   type StartPreviewOptions,
   type PreviewState as DispatcherPreviewState,
 } from './preview.js';
+
+export {
+  startPreviewProxy,
+  type PreviewProxyHandle,
+  type StartPreviewProxyOptions,
+} from './preview-proxy.js';

@@ -93,7 +93,19 @@ async function runSlot(
   slotIndex: number,
   claimNext: () => Promise<PersonaClaim | null>,
   model: string | undefined,
-  provider: 'claude-code' | 'codex-cli' | undefined,
+  provider:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp'
+    | undefined,
   effort: AutopilotEffort | undefined,
   signal: AbortSignal,
 ): Promise<void> {
@@ -175,7 +187,19 @@ async function runOneIteration(
   slotIndex: number,
   persona: AutopilotPersonaSnapshot,
   model: string | undefined,
-  provider: 'claude-code' | 'codex-cli' | undefined,
+  provider:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp'
+    | undefined,
   effort: AutopilotEffort | undefined,
   signal: AbortSignal,
 ): Promise<void> {

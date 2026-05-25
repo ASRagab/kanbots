@@ -7,6 +7,10 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { api } from '../api.js';
+import {
+  SessionDropdown,
+  useActiveSessionId,
+} from '../components/chat/SessionDropdown.js';
 import { ModelPicker } from '../components/forms/ModelPicker.js';
 import { useAgentRunStream } from '../hooks/useAgentRunStream.js';
 import { ageString } from '../labels.js';
@@ -18,6 +22,7 @@ import type {
   AgentRunStatus,
   Card,
   ChatConversation,
+  ChatSessionPayload,
   DecisionPayload,
   Message,
 } from '../types.js';
@@ -129,6 +134,11 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
   const [historyCards, setHistoryCards] = useState<Card[]>([]);
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
+  const [sessions, setSessions] = useState<ChatSessionPayload[]>([]);
+  const [activeSessionId, setActiveSessionId] = useActiveSessionId(
+    `kanbots.chat.${conversationId}.active-session`,
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   // Bumped after each send so useAgentRunStream re-subscribes — the server
   // closes the subscription on terminal status, and a chat resume reuses
@@ -145,17 +155,53 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
       setHistoryCards(payload.cards);
       setActiveRun(payload.activeRun);
       setLatestRun(payload.latestRun);
+      setSessions(payload.sessions);
+      // First load: pin the active session to the most-recent one when no
+      // localStorage value carried over. The session list is always sorted
+      // last-activity-first so [0] is the right default.
+      if (activeSessionId === null && payload.sessions[0]) {
+        setActiveSessionId(payload.sessions[0].id);
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [conversationId]);
+  }, [conversationId, activeSessionId, setActiveSessionId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const displayRun = activeRun ?? latestRun;
+  // Filter messages to the active session — multi-session chats keep one
+  // transcript per session even though they share the underlying thread.
+  // Legacy messages predating migration 0027 have chatSessionId=null; we
+  // still show them under the default backfill session so users don't
+  // lose history.
+  const sessionMessages = useMemo<Message[]>(() => {
+    if (activeSessionId === null) return messages;
+    return messages.filter(
+      (m) => m.chatSessionId === activeSessionId || m.chatSessionId === null,
+    );
+  }, [messages, activeSessionId]);
+
+  // The events stream is per-run, but we want the session's run, not the
+  // conversation's most-recent run (which might belong to a sibling
+  // session). Find the active/latest run that belongs to this session.
+  // Runs without a chatSessionId fall back to the conversation-wide
+  // active/latest so legacy threads still render.
+  const sessionActiveRun = useMemo<AgentRun | null>(() => {
+    if (activeSessionId === null) return activeRun;
+    if (activeRun && activeRun.chatSessionId === activeSessionId) return activeRun;
+    return null;
+  }, [activeRun, activeSessionId]);
+  const sessionLatestRun = useMemo<AgentRun | null>(() => {
+    if (activeSessionId === null) return latestRun;
+    if (latestRun && latestRun.chatSessionId === activeSessionId) return latestRun;
+    if (activeRun && activeRun.chatSessionId === activeSessionId) return activeRun;
+    return null;
+  }, [latestRun, activeRun, activeSessionId]);
+
+  const displayRun = sessionActiveRun ?? sessionLatestRun;
   const stream = useAgentRunStream(displayRun?.id ?? null, streamGen);
 
   // When the active run finishes (status flips to a terminal state) the
@@ -177,9 +223,9 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
   }, [stream.status, refresh]);
 
   const isLive =
-    activeRun !== null &&
+    sessionActiveRun !== null &&
     displayRun !== null &&
-    displayRun.id === activeRun.id &&
+    displayRun.id === sessionActiveRun.id &&
     (stream.status === 'running' ||
       stream.status === 'starting' ||
       stream.status === 'awaiting_input');
@@ -225,9 +271,19 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
     | { kind: 'message'; sortKey: string; id: string; message: Message; cards: Card[] }
     | { kind: 'event'; sortKey: string; id: string; event: AgentEvent };
 
+  // Restrict displayed events to the active session's runs (plus any
+  // legacy runs without a chatSessionId so backfilled history still
+  // surfaces under the default session).
+  const sessionRunIds = useMemo<Set<number>>(() => {
+    const ids = new Set<number>();
+    if (sessionActiveRun) ids.add(sessionActiveRun.id);
+    if (sessionLatestRun) ids.add(sessionLatestRun.id);
+    return ids;
+  }, [sessionActiveRun, sessionLatestRun]);
+
   const items: Item[] = useMemo(() => {
     const all: Item[] = [];
-    for (const m of messages) {
+    for (const m of sessionMessages) {
       all.push({
         kind: 'message',
         sortKey: m.createdAt,
@@ -248,6 +304,10 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
         if (text.trim().length === 0) continue;
         if (text.trimStart().startsWith('[kanbots:sibling-briefing]')) continue;
       }
+      // Scope events to the active session's runs. Events from other
+      // sessions live in the same persisted blob (we fetch by thread)
+      // but logically belong to their own transcript.
+      if (sessionRunIds.size > 0 && !sessionRunIds.has(e.agentRunId)) continue;
       all.push({ kind: 'event', sortKey: e.createdAt, id: `e${e.id}`, event: e });
     }
     all.sort((a, b) => {
@@ -255,7 +315,7 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
       return a.sortKey < b.sortKey ? -1 : 1;
     });
     return all;
-  }, [messages, mergedEvents, cardsByMessageId]);
+  }, [sessionMessages, mergedEvents, cardsByMessageId, sessionRunIds]);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickyRef = useRef(true);
@@ -302,7 +362,7 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
             </span>
           )}
         </div>
-        {activeRun &&
+        {sessionActiveRun &&
         (stream.status === 'running' ||
           stream.status === 'starting' ||
           stream.status === 'awaiting_input') ? (
@@ -310,7 +370,7 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
             type="button"
             className="kb-btn ghost"
             onClick={() => {
-              void api.stopChatRun(activeRun.id).then(() => refresh());
+              void api.stopChatRun(sessionActiveRun.id).then(() => refresh());
             }}
           >
             Stop
@@ -357,8 +417,12 @@ function ChatRoom({ conversationId }: { conversationId: number }) {
 
       <ReplyFooter
         conversationId={conversationId}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSessionsChange={setSessions}
+        onActiveSessionChange={setActiveSessionId}
         disabled={
-          activeRun !== null &&
+          sessionActiveRun !== null &&
           (stream.status === 'running' || stream.status === 'starting')
         }
         onSent={() => {
@@ -457,10 +521,18 @@ function ChatTitleEditor({
 
 function ReplyFooter({
   conversationId,
+  sessions,
+  activeSessionId,
+  onSessionsChange,
+  onActiveSessionChange,
   disabled,
   onSent,
 }: {
   conversationId: number;
+  sessions: ChatSessionPayload[];
+  activeSessionId: number | null;
+  onSessionsChange: (next: ChatSessionPayload[]) => void;
+  onActiveSessionChange: (next: number) => void;
   disabled: boolean;
   onSent: () => void;
 }) {
@@ -486,6 +558,7 @@ function ReplyFooter({
       if (appendSystemPrompt.trim().length > 0) {
         opts.appendSystemPrompt = appendSystemPrompt.trim();
       }
+      if (activeSessionId !== null) opts.sessionId = activeSessionId;
       const result = await api.postChatMessage(conversationId, trimmed, opts);
       setBody('');
       if (result.dispatchError) {
@@ -508,10 +581,33 @@ function ReplyFooter({
 
   return (
     <div className="kb-chat-foot">
+      <div className="kb-chat-foot-session">
+        <SessionDropdown
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onActiveSessionChange={onActiveSessionChange}
+          onSessionsChange={onSessionsChange}
+          onCreateSession={(input) => {
+            const args: Parameters<typeof api.createChatSession>[0] = {
+              conversationId,
+              agentProvider: input.provider,
+            };
+            if (input.model !== null) args.agentModel = input.model;
+            if (input.title !== null && input.title.length > 0) {
+              args.title = input.title;
+            }
+            return api.createChatSession(args);
+          }}
+          onRenameSession={(id, title) => api.renameChatSession(id, title)}
+          onDeleteSession={async (id) => {
+            await api.deleteChatSession(id);
+          }}
+        />
+      </div>
       {showAdvanced ? (
         <div className="kb-chat-foot-advanced">
           <label className="kb-chat-foot-field">
-            <span className="kb-chat-foot-field-label">Model</span>
+            <span className="kb-chat-foot-field-label">Model override</span>
             <ModelPicker
               value={modelSelection}
               onChange={setModelSelection}

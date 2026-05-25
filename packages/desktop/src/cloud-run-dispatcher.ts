@@ -55,13 +55,44 @@ const FLUSH_BACKOFF_MAX_MS = 15_000;
 /** Cap on in-memory buffer size so a long network outage doesn't OOM. */
 const MAX_BUFFERED_EVENTS = 5_000;
 
-const PROVIDER_TO_CLI: Record<AgentRunProvider, 'claude_code' | 'codex'> = {
+const PROVIDER_TO_CLI: Record<
+  AgentRunProvider,
+  | 'claude_code'
+  | 'codex'
+  | 'gemini'
+  | 'amp'
+  | 'cursor'
+  | 'copilot'
+  | 'opencode'
+  | 'droid'
+  | 'ccr'
+  | 'qwen'
+  | 'acp'
+> = {
   'claude-code': 'claude_code',
   'codex-cli': 'codex',
+  'gemini-cli': 'gemini',
+  'amp-cli': 'amp',
+  'cursor-cli': 'cursor',
+  'copilot-cli': 'copilot',
+  'opencode-cli': 'opencode',
+  'droid-cli': 'droid',
+  'ccr-cli': 'ccr',
+  'qwen-cli': 'qwen',
+  acp: 'acp',
 };
 const PROVIDER_TO_PROVIDER_TAG: Record<AgentRunProvider, string> = {
   'claude-code': 'anthropic',
   'codex-cli': 'openai',
+  'gemini-cli': 'google',
+  'amp-cli': 'sourcegraph',
+  'cursor-cli': 'cursor',
+  'copilot-cli': 'github',
+  'opencode-cli': 'opencode',
+  'droid-cli': 'factory',
+  'ccr-cli': 'router',
+  'qwen-cli': 'alibaba',
+  acp: 'acp',
 };
 
 /**

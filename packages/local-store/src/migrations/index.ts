@@ -20,6 +20,13 @@ import { migration as m0020 } from './0020-run-analytics.js';
 import { migration as m0021 } from './0021-learnings.js';
 import { migration as m0022 } from './0022-diff-hunks.js';
 import { migration as m0023 } from './0023-review-comments.js';
+import { migration as m0024 } from './0024-gemini-amp-providers.js';
+import { migration as m0025 } from './0025-multi-repo.js';
+import { migration as m0026 } from './0026-long-tail-providers.js';
+import { migration as m0027 } from './0027-chat-sessions.js';
+import { migration as m0028 } from './0028-chat-sessions-threads.js';
+import { migration as m0029 } from './0029-card-templates.js';
+import { migration as m0030 } from './0030-issue-relations.js';
 import type { Migration } from './types.js';
 
 // 0019-project-scope.ts is intentionally not imported here — it scaffolds
@@ -50,6 +57,13 @@ export const migrations: readonly Migration[] = [
   m0021,
   m0022,
   m0023,
+  m0024,
+  m0025,
+  m0026,
+  m0027,
+  m0028,
+  m0029,
+  m0030,
 ];
 
 export type { Migration };

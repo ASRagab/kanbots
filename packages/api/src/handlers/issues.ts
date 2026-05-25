@@ -18,9 +18,26 @@ import type {
   SentryMetaPayload,
   ThreadPayload,
 } from '../bridge.js';
+import { bootstrapWorkspace } from '../workspace-bootstrap.js';
 import { sweepAllRunsForThread } from './agent-runs.js';
-import { alreadyActive, badRequest, parseArgs } from './errors.js';
+import { alreadyActive, badRequest, notFound, parseArgs } from './errors.js';
 import type { HandlerDeps } from './types.js';
+
+/**
+ * Builds a `parent_number → child_count` map for the current
+ * workspace. Returns an empty map when the host has no active
+ * workspace (e.g. cloud mode pre-bootstrap) so callers don't have to
+ * special-case.
+ */
+function buildSubIssueCountMap(deps: HandlerDeps): Map<number, number> {
+  if (!deps.config.repoPath) return new Map();
+  const { workspace } = bootstrapWorkspace(
+    deps.store,
+    deps.config,
+    deps.config.repoPath,
+  );
+  return deps.store.issueRelations.countChildrenByParent(workspace.id);
+}
 
 const issueListSchema = z
   .object({
@@ -65,7 +82,19 @@ const addCommentSchema = z
   })
   .strict();
 
-const PROVIDER_ENUM = z.enum(['claude-code', 'codex-cli']);
+const PROVIDER_ENUM = z.enum([
+  'claude-code',
+  'codex-cli',
+  'gemini-cli',
+  'amp-cli',
+  'cursor-cli',
+  'copilot-cli',
+  'opencode-cli',
+  'droid-cli',
+  'ccr-cli',
+  'qwen-cli',
+  'acp',
+]);
 
 const postMessageSchema = z
   .object({
@@ -75,6 +104,8 @@ const postMessageSchema = z
     model: z.string().min(1).max(120).optional(),
     provider: PROVIDER_ENUM.optional(),
     appendSystemPrompt: z.string().max(20_000).optional(),
+    repoId: z.number().int().positive().optional(),
+    chatSessionId: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -93,6 +124,7 @@ const dispatchSchema = z
       .optional(),
     model: z.string().min(1).max(120).optional(),
     provider: PROVIDER_ENUM.optional(),
+    repoId: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -126,8 +158,21 @@ export interface PostMessageArgs {
   body: string;
   dispatch?: boolean;
   model?: string;
-  provider?: 'claude-code' | 'codex-cli';
+  provider?:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp';
   appendSystemPrompt?: string;
+  repoId?: number;
+  chatSessionId?: number;
 }
 
 export interface ListRunsArgs {
@@ -138,7 +183,19 @@ export interface DispatchArgs {
   number: number;
   fromStatus: StatusKey | null;
   model?: string;
-  provider?: 'claude-code' | 'codex-cli';
+  provider?:
+    | 'claude-code'
+    | 'codex-cli'
+    | 'gemini-cli'
+    | 'amp-cli'
+    | 'cursor-cli'
+    | 'copilot-cli'
+    | 'opencode-cli'
+    | 'droid-cli'
+    | 'ccr-cli'
+    | 'qwen-cli'
+    | 'acp';
+  repoId?: number;
 }
 
 export async function list(
@@ -151,11 +208,13 @@ export async function list(
   );
   const activeRunMap = buildActiveRunMap(deps);
   const sentryMap = buildSentryMetaMap(deps);
+  const subIssueCountMap = buildSubIssueCountMap(deps);
   return issues.map((issue) =>
     decorateIssue(
       issue,
       activeRunMap.get(issue.number) ?? null,
       sentryMap.get(issue.number) ?? null,
+      subIssueCountMap.get(issue.number) ?? 0,
     ),
   );
 }
@@ -176,8 +235,14 @@ export async function listArchived(
     return bt - at;
   });
   const sentryMap = buildSentryMetaMap(deps);
+  const subIssueCountMap = buildSubIssueCountMap(deps);
   return archived.map((issue) =>
-    decorateIssue(issue, null, sentryMap.get(issue.number) ?? null),
+    decorateIssue(
+      issue,
+      null,
+      sentryMap.get(issue.number) ?? null,
+      subIssueCountMap.get(issue.number) ?? 0,
+    ),
   );
 }
 
@@ -198,11 +263,13 @@ export async function get(
   const threadPayload = thread ? buildThreadPayload(deps, thread.id) : null;
   const activeRunMap = buildActiveRunMap(deps);
   const sentryMeta = lookupSentryMeta(deps, parsed.number);
+  const subIssueCountMap = buildSubIssueCountMap(deps);
   return {
     issue: decorateIssue(
       issue,
       activeRunMap.get(parsed.number) ?? null,
       sentryMeta,
+      subIssueCountMap.get(parsed.number) ?? 0,
     ),
     comments,
     thread: threadPayload,
@@ -240,7 +307,13 @@ export async function patch(
   };
   const issue = await deps.source.updateIssue(parsed.number, updates);
   const sentryMeta = lookupSentryMeta(deps, parsed.number);
-  const decorated = decorateIssue(issue, null, sentryMeta);
+  const subIssueCountMap = buildSubIssueCountMap(deps);
+  const decorated = decorateIssue(
+    issue,
+    null,
+    sentryMeta,
+    subIssueCountMap.get(parsed.number) ?? 0,
+  );
   if (decorated.status === 'done') {
     // The user has explicitly signalled they're done with this card, so always
     // remove the run worktrees from disk. Branches with unmerged commits are
@@ -276,16 +349,51 @@ export async function postMessage(
     repoName: deps.config.repo,
     issueNumber: parsed.number,
   });
+
+  // Resolve the chat session up front so the message + dispatched run
+  // can both be tagged. If the caller didn't pass one we leave it
+  // unset and the message lands without a session id — preserves the
+  // pre-multi-session behaviour for callers that don't use the
+  // TaskDetailModal session dropdown.
+  let chatSessionId: number | undefined;
+  if (parsed.chatSessionId !== undefined) {
+    const session = deps.store.chatSessions.findById(parsed.chatSessionId);
+    if (!session) {
+      throw notFound(`chat session ${parsed.chatSessionId} not found`);
+    }
+    if (session.threadId !== thread.id) {
+      throw notFound(
+        `chat session ${parsed.chatSessionId} does not belong to thread ${thread.id}`,
+      );
+    }
+    chatSessionId = parsed.chatSessionId;
+  }
+
   const message = deps.store.messages.create({
     threadId: thread.id,
     role: 'user',
     body: parsed.body,
+    ...(chatSessionId !== undefined ? { chatSessionId } : {}),
   });
+  if (chatSessionId !== undefined) {
+    deps.store.chatSessions.touch(chatSessionId);
+  }
 
   let dispatchError: string | null = null;
   if (dispatch) {
-    const active = deps.store.agentRuns.findActiveForThread(thread.id);
-    const latest = active ?? deps.store.agentRuns.findLatestForThread(thread.id);
+    // Scope active/latest lookups to the session when one was supplied
+    // so parallel sessions on the same issue thread can run
+    // independently. Falls back to thread-wide lookups otherwise to
+    // keep legacy issue replies behaving exactly as before.
+    const active =
+      chatSessionId !== undefined
+        ? deps.store.agentRuns.findActiveForChatSession(chatSessionId)
+        : deps.store.agentRuns.findActiveForThread(thread.id);
+    const latest =
+      active ??
+      (chatSessionId !== undefined
+        ? deps.store.agentRuns.findLatestForChatSession(chatSessionId)
+        : deps.store.agentRuns.findLatestForThread(thread.id));
     const willResume =
       (active !== null && active.status === 'awaiting_input') ||
       (active === null &&
@@ -319,6 +427,8 @@ export async function postMessage(
             prompt: parsed.body,
             ...(parsed.model !== undefined ? { model: parsed.model } : {}),
             ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+            ...(parsed.repoId !== undefined ? { repoId: parsed.repoId } : {}),
+            ...(chatSessionId !== undefined ? { chatSessionId } : {}),
             appendSystemPrompt,
           });
         }
@@ -398,6 +508,7 @@ export async function dispatch(
     appendSystemPrompt: buildTaskSystemPrompt(issue),
     ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+    ...(parsed.repoId !== undefined ? { repoId: parsed.repoId } : {}),
   });
   return { run, message };
 }
@@ -406,6 +517,7 @@ export function decorateIssue(
   issue: Issue,
   activeRun: IssueActiveRunPayload | null = null,
   sentryMeta: SentryMetaPayload | null = null,
+  subIssueCount = 0,
 ): DecoratedIssue {
   // Live agent_runs row is the source of truth for "is this card being worked
   // on right now". Labels lag behind (they're only refreshed on certain code
@@ -426,6 +538,7 @@ export function decorateIssue(
     agent,
     activeRun,
     sentryMeta,
+    ...(subIssueCount > 0 ? { subIssueCount } : {}),
   };
 }
 

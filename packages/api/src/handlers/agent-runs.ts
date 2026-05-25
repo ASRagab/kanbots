@@ -8,6 +8,7 @@ import type {
   DiffFile,
   DiffFileStatus,
   DiffPayload,
+  DraftedPrDescription,
   ForkRunResult,
   PromoteCommitResult,
   PromotePrResult,
@@ -24,6 +25,28 @@ const idSchema = z
     runId: z.number().int().positive(),
   })
   .strict();
+
+const promotePrSchema = z
+  .object({
+    runId: z.number().int().positive(),
+    title: z.string().min(1).max(200).optional(),
+    body: z.string().max(20_000).optional(),
+  })
+  .strict();
+
+export interface PromotePrArgs {
+  runId: number;
+  title?: string;
+  body?: string;
+}
+
+/**
+ * Soft cap on the diff text we hand to the drafting model. ~15 KB lands
+ * well inside any provider's prompt budget once the system prompt + issue
+ * context is added. Truncation is naive (head-of-string) but the model is
+ * told it happened so the body can hedge.
+ */
+const DRAFT_PR_DIFF_MAX_BYTES = 15 * 1024;
 
 export interface RunIdArgs {
   runId: number;
@@ -465,9 +488,9 @@ async function cleanupRunArtifacts(
 
 export async function promotePr(
   deps: HandlerDeps,
-  args: RunIdArgs,
+  args: PromotePrArgs,
 ): Promise<PromotePrResult> {
-  const parsed = parseArgs(idSchema, args);
+  const parsed = parseArgs(promotePrSchema, args);
   if (deps.config.mode !== 'github') {
     throw badRequest('PR creation requires github mode');
   }
@@ -491,9 +514,25 @@ export async function promotePr(
   });
 
   const base = (await detectLocalBase(repoPath)).replace(/^origin\//, '');
+  // Honor caller-supplied overrides — the renderer's "Create draft PR"
+  // modal pre-fills these from an AI draft and lets the user edit before
+  // submitting. When neither is provided we fall back to the issue's
+  // title / body so older callers keep working as-is.
+  const trimmedTitleOverride = parsed.title?.trim();
+  const trimmedBodyOverride = parsed.body?.trim();
+  const finalTitle =
+    trimmedTitleOverride && trimmedTitleOverride.length > 0
+      ? trimmedTitleOverride
+      : issue.title;
+  const finalBody =
+    trimmedBodyOverride && trimmedBodyOverride.length > 0
+      ? trimmedBodyOverride
+      : issue.body && issue.body.length > 0
+        ? issue.body
+        : undefined;
   const pr = await openDraftPR.call(deps.source, {
-    title: issue.title,
-    ...(issue.body ? { body: issue.body } : {}),
+    title: finalTitle,
+    ...(finalBody ? { body: finalBody } : {}),
     head: run.branchName,
     base,
     issueNumber: issue.number,
@@ -524,6 +563,64 @@ export async function promotePr(
     }
   }
   return { pr };
+}
+
+/**
+ * Drafts an AI-generated PR title + body from the run's diff. The result
+ * is meant to PRE-FILL the create-PR modal — it does NOT submit the PR.
+ * Submission still goes through `agent-runs:promote-pr` once the user
+ * approves (and optionally edits) the draft.
+ */
+export async function draftPrDescription(
+  deps: HandlerDeps,
+  args: RunIdArgs,
+): Promise<DraftedPrDescription> {
+  const parsed = parseArgs(idSchema, args);
+  if (!deps.draftPrDescription) {
+    throw badRequest('no PR description drafter is configured for this workspace');
+  }
+  const run = deps.store.agentRuns.findById(parsed.runId);
+  if (!run) throw notFound(`agent run ${parsed.runId} not found`);
+  if (!run.worktreePath) throw badRequest('run has no worktree');
+
+  const thread = deps.store.threads.findById(run.threadId);
+  if (!thread) throw badRequest('run has no thread');
+  const issue = await deps.source.getIssue(thread.issueNumber);
+
+  // Reuse the same diff collector the renderer's file viewer hits so the
+  // drafter sees exactly what the user is about to ship — committed +
+  // uncommitted + untracked, all framed against the same base.
+  const payload = await collectDiff(run.worktreePath, run.branchName);
+  const diffText = payload.files.map((f) => f.patch).join('\n');
+  const truncated = truncateForDraft(diffText);
+
+  const trimmedBody = issue.body?.trim() ?? '';
+  const drafted = await deps.draftPrDescription({
+    issueTitle: issue.title,
+    ...(trimmedBody.length > 0 ? { issueBody: trimmedBody } : {}),
+    diff: truncated.text,
+    ...(truncated.truncated ? { diffTruncated: true } : {}),
+  });
+  return {
+    title: drafted.title,
+    body: drafted.body,
+    diffTruncated: truncated.truncated,
+  };
+}
+
+function truncateForDraft(input: string): { text: string; truncated: boolean } {
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(input);
+  if (encoded.byteLength <= DRAFT_PR_DIFF_MAX_BYTES) {
+    return { text: input, truncated: false };
+  }
+  // Slice on the byte boundary, then decode. The default (non-fatal)
+  // TextDecoder swallows a partial trailing multi-byte sequence so we
+  // never throw mid-character.
+  const sliced = encoded.subarray(0, DRAFT_PR_DIFF_MAX_BYTES);
+  const decoder = new TextDecoder('utf-8');
+  const text = `${decoder.decode(sliced)}\n\n…[diff truncated for length]`;
+  return { text, truncated: true };
 }
 
 export async function detectLocalBase(repoPath: string): Promise<string> {

@@ -60,6 +60,62 @@ const api: KanbotsBridge = {
       { ok: true } | { ok: false; error: string }
     >,
   codexLoginCancel: () => ipcRenderer.invoke('kanbots:codex-login-cancel') as Promise<void>,
+  geminiAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:gemini-auth-status') as Promise<{ authed: boolean }>,
+  geminiLoginStart: () =>
+    ipcRenderer.invoke('kanbots:gemini-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  geminiLoginCancel: () => ipcRenderer.invoke('kanbots:gemini-login-cancel') as Promise<void>,
+  ampAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:amp-auth-status') as Promise<{ authed: boolean }>,
+  ampLoginStart: () =>
+    ipcRenderer.invoke('kanbots:amp-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  ampLoginCancel: () => ipcRenderer.invoke('kanbots:amp-login-cancel') as Promise<void>,
+  cursorAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:cursor-auth-status') as Promise<{ authed: boolean }>,
+  cursorLoginStart: () =>
+    ipcRenderer.invoke('kanbots:cursor-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  cursorLoginCancel: () => ipcRenderer.invoke('kanbots:cursor-login-cancel') as Promise<void>,
+  copilotAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:copilot-auth-status') as Promise<{ authed: boolean }>,
+  copilotLoginStart: () =>
+    ipcRenderer.invoke('kanbots:copilot-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  copilotLoginCancel: () => ipcRenderer.invoke('kanbots:copilot-login-cancel') as Promise<void>,
+  opencodeAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:opencode-auth-status') as Promise<{ authed: boolean }>,
+  opencodeLoginStart: () =>
+    ipcRenderer.invoke('kanbots:opencode-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  opencodeLoginCancel: () => ipcRenderer.invoke('kanbots:opencode-login-cancel') as Promise<void>,
+  droidAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:droid-auth-status') as Promise<{ authed: boolean }>,
+  droidLoginStart: () =>
+    ipcRenderer.invoke('kanbots:droid-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  droidLoginCancel: () => ipcRenderer.invoke('kanbots:droid-login-cancel') as Promise<void>,
+  ccrAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:ccr-auth-status') as Promise<{ authed: boolean }>,
+  ccrLoginStart: () =>
+    ipcRenderer.invoke('kanbots:ccr-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  ccrLoginCancel: () => ipcRenderer.invoke('kanbots:ccr-login-cancel') as Promise<void>,
+  qwenAuthStatus: () =>
+    ipcRenderer.invoke('kanbots:qwen-auth-status') as Promise<{ authed: boolean }>,
+  qwenLoginStart: () =>
+    ipcRenderer.invoke('kanbots:qwen-login-start') as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  qwenLoginCancel: () => ipcRenderer.invoke('kanbots:qwen-login-cancel') as Promise<void>,
   cloudAuthStatus: () =>
     ipcRenderer.invoke('kanbots:cloud-auth-status') as Promise<CloudStatusPayload>,
   cloudLoginStart: (opts?: { baseUrl?: string }) =>
@@ -132,7 +188,18 @@ const api: KanbotsBridge = {
     prompt: string;
     appendSystemPrompt?: string;
     model?: string;
-    provider?: 'claude-code' | 'codex-cli';
+    provider?:
+      | 'claude-code'
+      | 'codex-cli'
+      | 'gemini-cli'
+      | 'amp-cli'
+      | 'cursor-cli'
+      | 'copilot-cli'
+      | 'opencode-cli'
+      | 'droid-cli'
+      | 'ccr-cli'
+      | 'qwen-cli'
+      | 'acp';
   }) =>
     ipcRenderer.invoke('kanbots:cloud:start-agent-run', args) as Promise<{
       runId: string;

@@ -42,6 +42,14 @@ async function bootstrap(): Promise<{
   hasBridge: boolean;
   claudeAuthed: boolean;
   codexAuthed: boolean;
+  geminiAuthed: boolean;
+  ampAuthed: boolean;
+  cursorAuthed: boolean;
+  copilotAuthed: boolean;
+  opencodeAuthed: boolean;
+  droidAuthed: boolean;
+  ccrAuthed: boolean;
+  qwenAuthed: boolean;
   cloudAuthed: boolean;
   cloudPromptDismissed: boolean;
 }> {
@@ -55,6 +63,14 @@ async function bootstrap(): Promise<{
       hasBridge: false,
       claudeAuthed: true,
       codexAuthed: true,
+      geminiAuthed: true,
+      ampAuthed: true,
+      cursorAuthed: true,
+      copilotAuthed: true,
+      opencodeAuthed: true,
+      droidAuthed: true,
+      ccrAuthed: true,
+      qwenAuthed: true,
       cloudAuthed: false,
       cloudPromptDismissed: true,
     };
@@ -68,6 +84,14 @@ async function bootstrap(): Promise<{
     hasBridge: true,
     claudeAuthed: payload.claudeAuthed,
     codexAuthed: payload.codexAuthed,
+    geminiAuthed: payload.geminiAuthed,
+    ampAuthed: payload.ampAuthed,
+    cursorAuthed: payload.cursorAuthed,
+    copilotAuthed: payload.copilotAuthed,
+    opencodeAuthed: payload.opencodeAuthed,
+    droidAuthed: payload.droidAuthed,
+    ccrAuthed: payload.ccrAuthed,
+    qwenAuthed: payload.qwenAuthed,
     cloudAuthed: payload.cloudAuthed,
     cloudPromptDismissed: payload.cloudPromptDismissed,
   };
@@ -103,6 +127,14 @@ if (isChatWindow) {
       hasBridge,
       claudeAuthed,
       codexAuthed,
+      geminiAuthed,
+      ampAuthed,
+      cursorAuthed,
+      copilotAuthed,
+      opencodeAuthed,
+      droidAuthed,
+      ccrAuthed,
+      qwenAuthed,
       cloudAuthed,
       cloudPromptDismissed,
     }) => {
@@ -117,6 +149,14 @@ if (isChatWindow) {
               hasBridge={hasBridge}
               initialClaudeAuthed={claudeAuthed}
               initialCodexAuthed={codexAuthed}
+              initialGeminiAuthed={geminiAuthed}
+              initialAmpAuthed={ampAuthed}
+              initialCursorAuthed={cursorAuthed}
+              initialCopilotAuthed={copilotAuthed}
+              initialOpencodeAuthed={opencodeAuthed}
+              initialDroidAuthed={droidAuthed}
+              initialCcrAuthed={ccrAuthed}
+              initialQwenAuthed={qwenAuthed}
               initialCloudAuthed={cloudAuthed}
               initialCloudPromptDismissed={cloudPromptDismissed}
             />

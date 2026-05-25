@@ -54,6 +54,10 @@ export function makeHandlerTestKit(
     title: `suggested feature (${input.personaPrompt.slice(0, 20)})`,
     body: '# Suggested\n\nstub',
   });
+  const draftPrDescription = async (input: { issueTitle: string }) => ({
+    title: `PR: ${input.issueTitle.slice(0, 60)}`,
+    body: '### Summary\n\nstub PR body',
+  });
   const config: Config = { owner: 'octo', repo: 'hello', ...configOverride };
   const autopilot: AutopilotManager = {
     start: () => {
@@ -99,6 +103,7 @@ export function makeHandlerTestKit(
       supervisor,
       draftIssue,
       suggestIssue,
+      draftPrDescription,
       autopilot,
       analyzeSentryError,
       sentry,

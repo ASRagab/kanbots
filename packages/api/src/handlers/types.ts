@@ -6,6 +6,7 @@ import type { AutopilotManager } from '../autopilot/orchestrator.js';
 import type {
   Config,
   DraftIssueFn,
+  DraftPrDescriptionFn,
   EventSubscribeResult,
   PlannerEvent,
   SentryAnalyzerFn,
@@ -15,6 +16,7 @@ import type {
 export type {
   Config,
   DraftIssueFn,
+  DraftPrDescriptionFn,
   EventSubscribeResult,
   PlannerEvent,
   SentryAnalyzerFn,
@@ -65,6 +67,11 @@ export interface WorkspaceHouseRulesAccessor {
   set(input: { houseRules: string | null }): Promise<void> | void;
 }
 
+export interface WorkspaceAcpCommandAccessor {
+  get(): { acpCommand: string | null };
+  set(input: { acpCommand: string | null }): Promise<void> | void;
+}
+
 export interface HandlerDeps {
   source: IssueSource;
   store: Store;
@@ -72,12 +79,20 @@ export interface HandlerDeps {
   supervisor: AgentSupervisor;
   draftIssue: DraftIssueFn;
   suggestIssue: SuggestFeatureFn;
+  /**
+   * Optional. When wired, the renderer can pre-fill an AI-drafted PR title
+   * and body from a run's diff via `agent-runs:draft-pr-description`. If
+   * the runtime doesn't supply this, the channel returns a BadRequest so
+   * the renderer can fall back to a manual title/body.
+   */
+  draftPrDescription?: DraftPrDescriptionFn;
   autopilot: AutopilotManager;
   analyzeSentryError: SentryAnalyzerFn;
   sentry: SentryRuntime;
   providers: ProvidersRuntime;
   budgets?: WorkspaceBudgetsAccessor;
   houseRules?: WorkspaceHouseRulesAccessor;
+  acpCommand?: WorkspaceAcpCommandAccessor;
   revealPath?: (path: string) => Promise<void>;
   chatTools?: ChatToolRuntime;
   /**

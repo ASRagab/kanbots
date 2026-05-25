@@ -1,5 +1,6 @@
 export type ThreadId = number;
 export type ChatConversationId = number;
+export type ChatSessionId = number;
 export type MessageId = number;
 export type CardId = number;
 export type AgentRunId = number;
@@ -90,6 +91,41 @@ export interface ChatConversation {
   threadId: ThreadId;
 }
 
+/** Lifecycle states a chat session can occupy. Mirrors the underlying
+ *  agent_run state where applicable, plus terminal flags the supervisor
+ *  promotes to when a run finishes. */
+export type ChatSessionStatus =
+  | 'idle'
+  | 'running'
+  | 'awaiting_input'
+  | 'completed'
+  | 'failed';
+
+/**
+ * One parallel agent thread inside either a chat conversation (standalone
+ * chat) or an issue thread. Exactly one of conversationId / threadId is
+ * set — the dichotomy mirrors the underlying message storage:
+ *   - conversations host messages keyed by `conversation.threadId` and
+ *     drive the standalone Chat surface
+ *   - issue threads host messages keyed by `thread.id` directly and
+ *     drive the TaskDetailModal reply footer
+ * Each session pins its own provider/model so users can fork either
+ * surface into exploring/building/QA threads without crossing context.
+ */
+export interface ChatSession {
+  id: ChatSessionId;
+  conversationId: ChatConversationId | null;
+  threadId: ThreadId | null;
+  agentProvider: ProviderId;
+  agentModel: string | null;
+  /** Human-friendly label; NULL renders as "Latest" in the dropdown. */
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string | null;
+  status: ChatSessionStatus;
+}
+
 export interface Message {
   id: MessageId;
   threadId: ThreadId;
@@ -99,6 +135,9 @@ export interface Message {
   agentRunId: AgentRunId | null;
   promotedGithubCommentId: number | null;
   promotedAt: string | null;
+  /** Chat-session scope for messages that belong to a multi-session chat.
+   *  NULL for non-chat (issue) messages and rows predating migration 0027. */
+  chatSessionId: ChatSessionId | null;
 }
 
 export interface Card<P = unknown> {
@@ -148,6 +187,10 @@ export interface AgentRun {
   issueBodyChars: number | null;
   /** Terminal classification of the run, used by analytics and curator. */
   successSignal: SuccessSignal | null;
+  /** Chat-session scope for runs that belong to a multi-session chat.
+   *  NULL for issue runs and runs that predate migration 0027. Distinct
+   *  from `sessionId` above (the dispatcher's stream-resume token). */
+  chatSessionId: ChatSessionId | null;
 }
 
 export interface AgentCheck {
@@ -338,7 +381,18 @@ export interface AutopilotSession {
   planningSlots?: AutopilotPlanningSlot[];
 }
 
-export type ProviderId = 'claude-code' | 'codex-cli';
+export type ProviderId =
+  | 'claude-code'
+  | 'codex-cli'
+  | 'gemini-cli'
+  | 'amp-cli'
+  | 'cursor-cli'
+  | 'copilot-cli'
+  | 'opencode-cli'
+  | 'droid-cli'
+  | 'ccr-cli'
+  | 'qwen-cli'
+  | 'acp';
 export type ProviderKeyEncryption = 'safe' | 'plain';
 
 export interface ProviderConfig {

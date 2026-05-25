@@ -44,6 +44,14 @@ export interface BootstrapPayload {
   cloudRecents: RecentCloudWorkspace[];
   claudeAuthed: boolean;
   codexAuthed: boolean;
+  geminiAuthed: boolean;
+  ampAuthed: boolean;
+  cursorAuthed: boolean;
+  copilotAuthed: boolean;
+  opencodeAuthed: boolean;
+  droidAuthed: boolean;
+  ccrAuthed: boolean;
+  qwenAuthed: boolean;
   cloudAuthed: boolean;
   cloudPromptDismissed: boolean;
 }

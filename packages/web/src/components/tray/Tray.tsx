@@ -44,15 +44,23 @@ export function Tray({ onJump }: TrayProps) {
 
   // Re-poll when an awaiting/blocked issue changes — gives a near-real-time
   // experience without a dedicated SSE channel (Phase 12 may centralize).
-  const blockedKey = issues
+  const blockedIssueNumbers = issues
     .filter((i) => i.agent === 'blocked')
-    .map((i) => i.number)
-    .join(',');
+    .map((i) => i.number);
+  const blockedKey = blockedIssueNumbers.join(',');
   useEffect(() => {
     void refresh();
   }, [blockedKey, refresh]);
 
-  if (items.length === 0 || collapsed) return null;
+  // The board card itself now surfaces decision options inline (see
+  // DecisionActions in Card.tsx) — when every pending decision corresponds
+  // to a card already shown on the board, the floating tray is redundant
+  // chrome. Filter the items to just the ones whose issue isn't currently
+  // rendering the inline decision affordance, so the tray only appears for
+  // edge cases (archived issues, cards filtered out of the active view).
+  const blockedSet = new Set(blockedIssueNumbers);
+  const visibleItems = items.filter((item) => !blockedSet.has(item.issueNumber));
+  if (visibleItems.length === 0 || collapsed) return null;
 
   async function pick(card: PendingDecisionPayload, value: string): Promise<void> {
     if (submitting !== null) return;
@@ -90,7 +98,7 @@ export function Tray({ onJump }: TrayProps) {
       <div className="kb-tray-head">
         <span className="px" aria-hidden />
         <span className="t">Decisions awaiting you</span>
-        <span className="ct">{items.length}</span>
+        <span className="ct">{visibleItems.length}</span>
         <button
           type="button"
           className="close"
@@ -102,27 +110,24 @@ export function Tray({ onJump }: TrayProps) {
         </button>
       </div>
       <div className="kb-tray-body" role="log" aria-live="polite" aria-relevant="additions">
-        {items.map((item) => {
+        {visibleItems.map((item) => {
           const issue = issues.find((i) => i.number === item.issueNumber);
           const title = issue?.title ?? `issue #${item.issueNumber}`;
           return (
-            <button
-              key={item.cardId}
-              type="button"
-              className="kb-tray-item"
-              onClick={() => onJump(item.issueNumber)}
-            >
-              <div className="kb-tray-num">
-                #{item.issueNumber} · run {item.runId} · {ageString(item.createdAt)} ago
-              </div>
-              <div className="kb-tray-title">{title}</div>
-              <div className="kb-tray-q">{item.question}</div>
-              <div
-                className="kb-tray-opts"
-                onClick={(e) => e.stopPropagation()}
-                role="group"
-                aria-label="Decision options"
+            <div key={item.cardId} className="kb-tray-item">
+              <button
+                type="button"
+                className="kb-tray-jump"
+                onClick={() => onJump(item.issueNumber)}
+                aria-label={`Jump to issue #${item.issueNumber}`}
               >
+                <div className="kb-tray-num">
+                  #{item.issueNumber} · run {item.runId} · {ageString(item.createdAt)} ago
+                </div>
+                <div className="kb-tray-title">{title}</div>
+                <div className="kb-tray-q">{item.question}</div>
+              </button>
+              <div className="kb-tray-opts" role="group" aria-label="Decision options">
                 {item.options.map((opt) => (
                   <button
                     key={opt.value}
@@ -145,7 +150,7 @@ export function Tray({ onJump }: TrayProps) {
                   Dismiss
                 </button>
               </div>
-            </button>
+            </div>
           );
         })}
         {error ? <div className="kb-tray-error">{error}</div> : null}

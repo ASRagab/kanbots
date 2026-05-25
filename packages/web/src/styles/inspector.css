@@ -397,12 +397,14 @@
   gap: 6px;
   padding: 0 12px 12px;
   flex-wrap: wrap;
+  align-items: stretch;
 }
 .kb-decision-opt {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 6px 12px;
+  min-height: 30px;
   border-radius: 7px;
   background: var(--bg-1);
   border: 1px solid var(--hairline);
@@ -411,6 +413,7 @@
   font-weight: 500;
   cursor: pointer;
   font-family: var(--ff-sans);
+  line-height: 1;
 }
 .kb-decision-opt:hover:not(:disabled) {
   background: var(--bg-2);
@@ -435,12 +438,18 @@
   color: var(--failed);
 }
 .kb-decision-opt .num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: var(--ff-mono);
   font-size: 10px;
+  line-height: 1;
   color: var(--ink-3);
-  padding: 1px 4px;
+  width: 18px;
+  height: 18px;
   border: 1px solid var(--hairline);
   border-radius: 3px;
+  flex-shrink: 0;
 }
 .kb-decision-resolved-note {
   padding: 0 14px 12px;
@@ -752,6 +761,40 @@
   color: var(--ink);
 }
 .kb-preview-frame .pf-play:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Icon-only toggle button for in-iframe tools (devtools / inspect). Same
+   22×22 footprint as .pf-play so the toolbar rhythm is preserved; square
+   with a 5px corner radius so the active accent fill reads clearly. */
+.kb-preview-frame .pf-tool {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--hairline-soft);
+  color: var(--ink-2);
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.kb-preview-frame .pf-tool:hover {
+  border-color: var(--hairline);
+  background: var(--bg-1);
+  color: var(--ink);
+}
+.kb-preview-frame .pf-tool.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+.kb-preview-frame .pf-tool:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

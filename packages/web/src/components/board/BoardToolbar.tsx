@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { WorkspaceCostMeter } from './WorkspaceCostMeter.js';
 
 export interface BoardToolbarProps {
   crumbs: ReactNode;
@@ -12,6 +13,13 @@ export interface BoardToolbarProps {
   autopilotDisabledTitle?: string | undefined;
   /** Extra trailing action buttons — used by cloud mode for "Refresh" / "Switch workspace". */
   trailingActions?: ReactNode;
+  /** Workspace-wide cost since midnight (sum of run totalCostUsd). Null
+   *  while the first fetch is in flight; the meter dims to a placeholder
+   *  rather than flashing "$0.00". Omit entirely to hide the meter. */
+  costTodayUsd?: number | null | undefined;
+  /** Optional handler invoked when the user clicks the cost meter —
+   *  typically opens the Stats & cost modal. */
+  onOpenCostMeter?: (() => void) | undefined;
 }
 
 const searchIcon = (
@@ -56,7 +64,13 @@ export function BoardToolbar({
   autopilotDisabled = false,
   autopilotDisabledTitle,
   trailingActions,
+  costTodayUsd,
+  onOpenCostMeter,
 }: BoardToolbarProps) {
+  // Show the meter when the caller wires it up at all — `undefined` hides
+  // it (used by hosts that don't have cost data yet); `null` keeps it
+  // visible but in its loading-placeholder state.
+  const showCostMeter = costTodayUsd !== undefined;
   return (
     <div className="kb-board-toolbar">
       <div className="kb-crumbs">{crumbs}</div>
@@ -71,6 +85,9 @@ export function BoardToolbar({
           <span>Search issues, branches, agents…</span>
           <span className="kb-search-kbd">⌘K</span>
         </button>
+        {showCostMeter ? (
+          <WorkspaceCostMeter totalUsd={costTodayUsd} onClick={onOpenCostMeter} />
+        ) : null}
         <button
           type="button"
           className="kb-btn ghost"
