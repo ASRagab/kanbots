@@ -36,6 +36,22 @@
 
 ## Getting started
 
+### Install via npx (recommended)
+
+```sh
+npx kanbots
+```
+
+That's it. On first run, the right binary downloads automatically (~80MB)
+from the [releases page](https://github.com/leodavinci1/kanbots/releases),
+and the app opens.
+
+To upgrade later: `npx kanbots@latest`.
+
+macOS arm64/x64 and Linux x64 are fully automated. On Windows, the npx
+launcher points you at the `.exe` installer for v1 — see
+[`npx-cli/README.md`](npx-cli/README.md).
+
 ### Install a packaged build
 
 Latest binaries: [releases page](https://github.com/leodavinci1/kanbots/releases).
