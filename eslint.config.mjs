@@ -11,6 +11,7 @@ export default [
       '**/.vite/**',
       '**/coverage/**',
       '**/release/**',
+      'npx-cli/**',
     ],
   },
   js.configs.recommended,
